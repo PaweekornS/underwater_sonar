@@ -1,4 +1,5 @@
-# sonar_project
+# Forward-Looking Sonar Image Synthesis for Enhanced Underwater Object Detection
+---
 
 This klsg dataset contained images from:
 1. https://drive.google.com/file/d/1lao8VSbycjlSpctpaeKO0Vfn8H-TGEtj/view?usp=sharing
