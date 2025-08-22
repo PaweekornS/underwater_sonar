@@ -1,6 +1,5 @@
 import numpy as np
 import cv2
-
 from skimage.filters import threshold_multiotsu, gaussian
 from scipy.stats import weibull_min
 

@@ -1,8 +1,8 @@
-from utils import *
+from synthetic.utils import *
 import matplotlib.pyplot as plt
 
-ref_path  = "klsg_dataset/aircraft/000001_jpg.rf.2fa1cc60e74968e8a2d4710607582135.jpg"
-mask_path = "optical/aircraft/aircraft_1.jpg"
+ref_path  = "/data/klsg_dataset/aircraft/000001_jpg.rf.2fa1cc60e74968e8a2d4710607582135.jpg"
+mask_path = "/data/masked/aircraft/aircraft_1.jpg"
 
 out = generate_semisynthetic_from_mask(
     mask_path=mask_path,
