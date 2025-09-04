@@ -1,152 +1,165 @@
 import numpy as np
+import math
+import random
+
+from scipy.ndimage import gaussian_filter
+from PIL import Image, ImageFilter
 import cv2
-from skimage.filters import threshold_multiotsu, gaussian
-from scipy.stats import weibull_min
 
+# -------------------------------
+# Step 1: Adaptive threshold (3-class)
+# -------------------------------
+def adaptive_3class_segmentation(ref_img, k=31, t_lo=-1.0, t_hi=1.25):
+    ref = np.array(ref_img.convert("L"), dtype=np.float32) / 255.0
+    # local mean / std via box filter (approx with Gaussian here)
+    m = gaussian_filter(ref, k/6)
+    s = np.sqrt(np.maximum(gaussian_filter(ref**2, k/6) - m*m, 1e-6))
+    Z = (ref - m) / (s + 1e-6)
+    shadow = (Z < t_lo).astype(np.uint8)
+    obj    = (Z > t_hi).astype(np.uint8)
+    bg     = 1 - np.clip(shadow + obj, 0, 1)
+    return shadow, obj, bg, ref
 
-def ensure_uint8(img):
-    if img.dtype == np.uint8: return img
-    img = img.astype(np.float32)
-    img -= img.min()
-    m = img.max()
-    if m > 0: img /= m
-    return (img * 255).astype(np.uint8)
+# -------------------------------
+# Step 2: Random bg crop
+# -------------------------------
+def random_bg_crop(bg_mask, ref, crop_size=(128,128)):
+    H, W = bg_mask.shape
+    ys, xs = np.where(bg_mask > 0)
+    idx = random.randrange(len(xs))
+    cy, cx = ys[idx], xs[idx]
+    ch, cw = crop_size
+    y0 = np.clip(cy - ch//2, 0, H-ch)
+    x0 = np.clip(cx - cw//2, 0, W-cw)
+    patch = ref[y0:y0+ch, x0:x0+cw]
+    return patch
 
+# -------------------------------
+# Step 3+4: Place mask + shadow
+# -------------------------------
+def _np_gaussian_blur(a: np.ndarray, sigma: float) -> np.ndarray:
+    if sigma <= 0: 
+        return a
+    # use PIL for speed & no SciPy dependency
+    img = Image.fromarray((np.clip(a,0,1)*255).astype(np.uint8))
+    img = img.filter(ImageFilter.GaussianBlur(radius=float(sigma)))
+    return np.array(img, dtype=np.float32)/255.0
 
-def translate_mask(mask, dx, dy, scale=1.0, blur_sigma=1.2):
-    mask = (mask>0).astype(np.uint8)*255
-    h, w = mask.shape
-    if scale != 1.0:
-        mask = cv2.resize(mask, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_NEAREST)
-        h, w = mask.shape
-    M = np.float32([[1,0,dx],[0,1,dy]])
-    shifted = cv2.warpAffine(mask, M, (w, h), flags=cv2.INTER_NEAREST, borderValue=0)
-    if blur_sigma and blur_sigma > 0:
-        shifted = ensure_uint8(gaussian(shifted/255.0, blur_sigma)*255)
-    return (shifted>0).astype(np.uint8)*255
-
-
-def segment_reference_multiotsu(ref_gray, classes=3):
-    ref = ensure_uint8(ref_gray)
-    thr = threshold_multiotsu(ref, classes=classes)
-    regions = np.digitize(ref, bins=thr)
-    
-    # 0=shadow (darkest), 1=background, 2=highlight (brightest)
-    shadow_mask = (regions==0).astype(np.uint8)*255
-    bg_mask     = (regions==1).astype(np.uint8)*255
-    hl_mask     = (regions==2).astype(np.uint8)*255
-    return hl_mask, shadow_mask, bg_mask
-
-
-def fit_weibull_from_region(img_u8, region_mask):
-    vals = img_u8[region_mask>0].astype(np.float64)
-    if vals.size < 50:
-        return dict(c=1.5, scale=max(1.0, vals.std() if vals.size>0 else 10.0), min_val=float(vals.min() if vals.size>0 else 0.0))
-    min_val = vals.min()
-    shifted = np.clip(vals - min_val, 0, None) + 1e-6
-    c, loc, scale = weibull_min.fit(shifted, floc=0)
-    return dict(c=float(c), scale=float(scale), min_val=float(min_val))
-
-
-def sample_weibull(params, n):
-    c, scale, min_val = params["c"], params["scale"], params["min_val"]
-    samples = weibull_min.rvs(c, loc=0, scale=scale, size=n) + min_val
-    return np.clip(samples, 0, 255).astype(np.uint8)
-
-
-def build_background_from_reference(ref_gray, bg_mask, out_shape, tile_size=128):
-    ref = ensure_uint8(ref_gray)
-    H, W = out_shape
-    canvas = np.zeros((H, W), dtype=np.uint8)
-    ys, xs = np.where(bg_mask>0)
-    if len(ys) == 0:
-        return cv2.resize(ref, (W, H), interpolation=cv2.INTER_LINEAR)
-    for y0 in range(0, H, tile_size):
-        for x0 in range(0, W, tile_size):
-            idx = np.random.randint(0, len(ys))
-            cy, cx = int(ys[idx]), int(xs[idx])
-            y1 = max(0, cy - tile_size//2); y2 = y1 + tile_size
-            x1 = max(0, cx - tile_size//2); x2 = x1 + tile_size
-            patch = ref[y1:y2, x1:x2]
-            if patch.shape[:2] != (tile_size, tile_size):
-                patch = cv2.resize(patch, (tile_size, tile_size), interpolation=cv2.INTER_LINEAR)
-            canvas[y0:y0+tile_size, x0:x0+tile_size] = patch[:min(tile_size, H-y0), :min(tile_size, W-x0)]
-    return canvas
-
-
-def feather_blend(dst, src, mask, feather_sigma=2.5):
-    mask_f = gaussian((mask>0).astype(np.float32), sigma=feather_sigma)
-    mask_f = np.clip(mask_f, 0, 1)
-    return ensure_uint8(dst*(1-mask_f) + src*mask_f)
-
-
-def generate_semisynthetic_from_mask(
-    mask_path, reference_path,
-    out_w=512, out_h=256,
-    obj_height_frac=0.6,   # object target height as frac of output height
-    x_offset_frac=0.15,    # left placement (0..1)
-    shadow_dx=35, shadow_dy=15, shadow_scale=1.0,
-    downsample_azimuth=0
+def place_mask_with_shadow(
+    bg_patch: np.ndarray,
+    mask_img: Image.Image,
+    angle_deg: float = 200.0,
+    scale_range=(0.25, 0.45),     # object width as fraction of bg width
+    rot_range=(-20.0, 20.0),      # small rotation range
+    shadow_scale: float = 1.2,    # shadow length ≈ 1.2× object size (not too big)
+    shadow_blur_sigma: float = 4, # soft penumbra
+    shadow_darkness: float = 0.6, # darken amount under shadow (0..1)
+    highlight_gain: float = 2.0,  # brighten object a bit
 ):
-    # read binary mask (255=object)
-    mask = cv2.imread(mask_path, 0)
-    mask = cv2.bitwise_not(mask)   # switch black and white
-    mask = (mask>0).astype(np.uint8)*255
+    """
+    bg_patch: float32 array in [0,1], HxW
+    mask_img: PIL image (white object on black)
+    returns: composite float32 HxW
+    """
+    bg = np.clip(bg_patch.astype(np.float32), 0, 1)
+    H, W = bg.shape
 
-    ref = cv2.imread(reference_path, 0)
+    # 1) Prepare mask: scale, rotate
+    #    - pick target width ~ 25–45% of bg width (can tweak)
+    target_w = int(W * random.uniform(*scale_range))
+    # preserve aspect
+    ratio = target_w / mask_img.width
+    target_h = max(1, int(mask_img.height * ratio))
+    obj = mask_img.convert("L").resize((target_w, target_h), Image.BILINEAR)
 
-    H, W = out_h, out_w
-    ys, xs = np.where(mask>0)
-    if len(ys)==0: raise ValueError("Mask has no foreground (all zeros).")
-    obj_h = ys.max()-ys.min()+1; obj_w = xs.max()-xs.min()+1
+    angle = random.uniform(*rot_range)
+    obj = obj.rotate(angle, resample=Image.BILINEAR, expand=True, fillcolor=0)
 
-    # scale to desired fraction of canvas height
-    target_h = max(1, int(obj_height_frac * H))
-    s = min(target_h/obj_h, 0.9*W/obj_w)
-    mask_r = cv2.resize(mask, (int(mask.shape[1]*s), int(mask.shape[0]*s)), interpolation=cv2.INTER_NEAREST)
+    obj_np_small = (np.array(obj, dtype=np.float32) / 255.0)
+    # binarize a bit to keep edges soft but remove haze
+    obj_np_small = (obj_np_small > 0.5).astype(np.float32)
 
-    # place on canvas
-    canvas_obj = np.zeros((H, W), dtype=np.uint8)
-    y0 = (H - mask_r.shape[0])//2
-    x0 = int(x_offset_frac * W)
-    canvas_obj[y0:y0+mask_r.shape[0], x0:x0+mask_r.shape[1]] = mask_r
+    # 2) Paste onto full-size canvas at a random location
+    mask_canvas = np.zeros((H, W), dtype=np.float32)
+    h, w = obj_np_small.shape
+    # choose top-left so the object fully fits
+    max_oy = max(0, H - h)
+    max_ox = max(0, W - w)
+    oy = random.randint(0, max_oy) if max_oy > 0 else 0
+    ox = random.randint(0, max_ox) if max_ox > 0 else 0
+    mask_canvas[oy:oy+h, ox:ox+w] = np.maximum(mask_canvas[oy:oy+h, ox:ox+w], obj_np_small)
 
-    # shadow from translated object area
-    shadow_mask = translate_mask(canvas_obj, shadow_dx, shadow_dy, scale=shadow_scale, blur_sigma=1.2)
-    shadow_mask[canvas_obj>0] = 0  # avoid overlap dominance
+    # 3) Simple highlight on the object
+    comp = bg*(1.0 - mask_canvas) + mask_canvas*np.clip(bg*highlight_gain, 0, 1)
 
-    # reference segmentation & Weibull fit
-    hl_ref, sh_ref, bg_ref = segment_reference_multiotsu(ref, classes=3)
-    ref_u8 = ensure_uint8(ref)
-    hl_params = fit_weibull_from_region(ref_u8, hl_ref)
-    sh_params = fit_weibull_from_region(ref_u8, sh_ref)
+    # 4) Build a small shadow (projected, short, soft)
+    ys, xs = np.where(mask_canvas > 0.5)
+    if xs.size > 0:
+        obj_w = xs.max() - xs.min() + 1
+        obj_h = ys.max() - ys.min() + 1
+        L = int(shadow_scale * max(obj_w, obj_h))  # short-ish
+        theta = math.radians(angle_deg)
+        dx = int(round(math.cos(theta) * L))
+        dy = int(round(math.sin(theta) * L))
 
-    # background mosaic
-    bg = build_background_from_reference(ref_u8, bg_ref, out_shape=(H, W), tile_size=128)
+        # draw a projected swath by stepping from object towards (dx,dy)
+        shadow = np.zeros_like(mask_canvas, dtype=np.float32)
+        steps = max(abs(dx), abs(dy), 1)
+        for t in range(steps+1):
+            yi = np.clip(ys + int(round(dy * t/steps)), 0, H-1)
+            xi = np.clip(xs + int(round(dx * t/steps)), 0, W-1)
+            shadow[yi, xi] = 1.0
 
-    # paint object
-    out = bg.copy()
-    n_obj = int((canvas_obj>0).sum())
-    if n_obj:
-        obj_vals = sample_weibull(hl_params, n_obj)
-        obj_vals = np.clip(obj_vals * 1.2, 0, 255)  # 20% brighter
-        out[canvas_obj > 0] = obj_vals
+        # soften penumbra and normalize
+        shadow = _np_gaussian_blur(shadow, shadow_blur_sigma)
+        if shadow.max() > 0:
+            shadow = shadow / shadow.max()
+
+        # do NOT darken the object body itself
+        inv_obj = 1.0 - mask_canvas
+        comp = comp * (1.0 - (shadow * inv_obj) * shadow_darkness)
+
+    return np.clip(comp, 0, 1).astype(np.float32)
 
 
-    # paint shadow (feathered)
-    n_sh = int((shadow_mask>0).sum())
-    if n_sh:
-        shadow_layer = out.copy()
-        shadow_layer[shadow_mask>0] = sample_weibull(sh_params, n_sh)
-        out = feather_blend(out, shadow_layer, shadow_mask, feather_sigma=2.5)
+# -------------------------------
+# Step 5: Weibull speckle
+# -------------------------------
+def fit_weibull(data, max_iters=20):
+    x = data.flatten(); x = x[x>0]
+    k = 1.5
+    for _ in range(max_iters):
+        xk = x**k
+        A = (xk*np.log(x)).sum()/xk.sum()
+        B = np.log(x).mean()
+        g = 1/k + B - A
+        k -= g/( -1/k**2 - ( (xk*(np.log(x)**2)).sum()*xk.sum() - (xk*np.log(x)).sum()**2 )/(xk.sum()**2) )
+        k = max(k, 0.5)
+    lam = (x**k).mean()**(1/k)
+    return k, lam
 
-    # mild blur for acoustic smoothing
-    out = ensure_uint8(cv2.GaussianBlur(out, (0,0), 0.8))
+def apply_weibull_speckle(img, k, lam):
+    H,W = img.shape
+    U = np.random.rand(H,W)
+    speckle = lam * (-np.log(1-U+1e-8))**(1/k)
+    speckle /= speckle.mean()
+    return np.clip(img * speckle, 0, 1)
 
-    # optional azimuth downsampling (simulate along-track)
-    if downsample_azimuth and downsample_azimuth > 1:
-        f = int(downsample_azimuth)
-        tmp = cv2.resize(out, (W//f, H), interpolation=cv2.INTER_AREA)
-        out = cv2.resize(tmp, (W, H), interpolation=cv2.INTER_NEAREST)
+# -------------------------------
+# Full pipeline
+# -------------------------------
+def semi_synthetic(mask_path, ref_path, out_path):
+    ref_img = Image.open(ref_path)
+    mask_img = Image.open(mask_path)
 
-    return out
+    shadow, obj, bg, ref = adaptive_3class_segmentation(ref_img)
+    patch = random_bg_crop(bg, ref, crop_size=(128,128))
+    comp  = place_mask_with_shadow(patch, mask_img)
+    k, lam = fit_weibull(patch*255.0)
+    final = apply_weibull_speckle(comp, k, lam)
+
+    img = (final*255).astype(np.uint8)
+    cv2.imwrite(out_path, img)
+    print(f"Saved: {out_path}, Weibull k={k:.2f}, λ={lam:.2f}")
+    
+    return img
