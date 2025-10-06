@@ -1,4 +1,4 @@
-# Forward-Looking Sonar Image Synthesis for Enhanced Underwater Object Detection
+#Side-Scan Sonar Image Synthesis for Enhanced Underwater Object Detection
 ---
 
 ### Dataset
