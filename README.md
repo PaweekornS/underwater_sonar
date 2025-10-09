@@ -45,7 +45,7 @@ These are experimental steps to assess their impact on detection accuracy.
 
 ### 3️⃣ Object Detection
 
-We use the **YOLO framework** (Ultralytics YOLOv8 / YOLOv5) as the baseline detector due to its real-time performance and robustness.
+We use the **YOLO framework** (Ultralytics) as the baseline detector due to its real-time performance and robustness.
 
 #### Experiments
 
@@ -56,11 +56,9 @@ We use the **YOLO framework** (Ultralytics YOLOv8 / YOLOv5) as the baseline dete
 | **E3** | Mixed dataset (Real + Synthetic) | Test synthetic data as augmentation for improving generalization. |
 
 #### Evaluation Metrics
-- mAP (mean Average Precision)
-- Precision / Recall
-- F1-score
+- Image Synthesis: FID, SSIM, PSNR
+- Object detection: mAP (mean Average Precision), IoU
 - Inference time
-- Cross-domain detection on mixed scenes (real + optical object composites)
 
 ---
 
