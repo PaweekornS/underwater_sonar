@@ -1,165 +1,245 @@
 import numpy as np
-import math
+from scipy.stats import weibull_min
+from PIL import Image
+from tqdm import tqdm
 import random
+import os
 
-from scipy.ndimage import gaussian_filter
-from PIL import Image, ImageFilter
-import cv2
+# --- 2. Parameters Setup ---
+NUM_OBJECTS_PER_BG = 1
+MIN_SCALE_FACTOR = 0.05
+MAX_SCALE_FACTOR = 0.15
 
-# -------------------------------
-# Step 1: Adaptive threshold (3-class)
-# -------------------------------
-def adaptive_3class_segmentation(ref_img, k=31, t_lo=-1.0, t_hi=1.25):
-    ref = np.array(ref_img.convert("L"), dtype=np.float32) / 255.0
-    # local mean / std via box filter (approx with Gaussian here)
-    m = gaussian_filter(ref, k/6)
-    s = np.sqrt(np.maximum(gaussian_filter(ref**2, k/6) - m*m, 1e-6))
-    Z = (ref - m) / (s + 1e-6)
-    shadow = (Z < t_lo).astype(np.uint8)
-    obj    = (Z > t_hi).astype(np.uint8)
-    bg     = 1 - np.clip(shadow + obj, 0, 1)
-    return shadow, obj, bg, ref
+OBJECT_COLOR = 255
+SHADOW_COLOR = 0
+ACTIVE_COLOR_TOLERANCE = 5  # tolerance around pure white/black in mask
 
-# -------------------------------
-# Step 2: Random bg crop
-# -------------------------------
-def random_bg_crop(bg_mask, ref, crop_size=(128,128)):
-    H, W = bg_mask.shape
-    ys, xs = np.where(bg_mask > 0)
-    idx = random.randrange(len(xs))
-    cy, cx = ys[idx], xs[idx]
-    ch, cw = crop_size
-    y0 = np.clip(cy - ch//2, 0, H-ch)
-    x0 = np.clip(cx - cw//2, 0, W-cw)
-    patch = ref[y0:y0+ch, x0:x0+cw]
-    return patch
+# Weibull quantiles for "bright" (object) and "dark" (shadow)
+OBJECT_QUANTILE = 0.5
+SHADOW_QUANTILE = 0.25
 
-# -------------------------------
-# Step 3+4: Place mask + shadow
-# -------------------------------
-def _np_gaussian_blur(a: np.ndarray, sigma: float) -> np.ndarray:
-    if sigma <= 0: 
-        return a
-    # use PIL for speed & no SciPy dependency
-    img = Image.fromarray((np.clip(a,0,1)*255).astype(np.uint8))
-    img = img.filter(ImageFilter.GaussianBlur(radius=float(sigma)))
-    return np.array(img, dtype=np.float32)/255.0
+# For fitting speed
+MAX_PIXELS_FOR_WEIBULL = 4000
 
-def place_mask_with_shadow(
-    bg_patch: np.ndarray,
-    mask_img: Image.Image,
-    angle_deg: float = 200.0,
-    scale_range=(0.25, 0.45),     # object width as fraction of bg width
-    rot_range=(-20.0, 20.0),      # small rotation range
-    shadow_scale: float = 1.2,    # shadow length ≈ 1.2× object size (not too big)
-    shadow_blur_sigma: float = 4, # soft penumbra
-    shadow_darkness: float = 0.6, # darken amount under shadow (0..1)
-    highlight_gain: float = 2.0,  # brighten object a bit
-):
+def fit_weibull_from_background(bg_np):
     """
-    bg_patch: float32 array in [0,1], HxW
-    mask_img: PIL image (white object on black)
-    returns: composite float32 HxW
+    Fit Weibull distributions for object (bright) and shadow (dark) intensities
+    using the grayscale of the background image.
     """
-    bg = np.clip(bg_patch.astype(np.float32), 0, 1)
-    H, W = bg.shape
+    # bg_np: float32, shape (H, W, 3)
+    # Convert to grayscale
+    gray = 0.299 * bg_np[:, :, 0] + 0.587 * bg_np[:, :, 1] + 0.114 * bg_np[:, :, 2]
+    flat = gray.flatten()
+    flat = flat[np.isfinite(flat)]
+    flat = flat[(flat >= 0) & (flat <= 255)]
 
-    # 1) Prepare mask: scale, rotate
-    #    - pick target width ~ 25–45% of bg width (can tweak)
-    target_w = int(W * random.uniform(*scale_range))
-    # preserve aspect
-    ratio = target_w / mask_img.width
-    target_h = max(1, int(mask_img.height * ratio))
-    obj = mask_img.convert("L").resize((target_w, target_h), Image.BILINEAR)
+    if len(flat) == 0:
+        # fallback mid-gray
+        return (1.0, 0.0, 128.0), (1.0, 0.0, 64.0)
 
-    angle = random.uniform(*rot_range)
-    obj = obj.rotate(angle, resample=Image.BILINEAR, expand=True, fillcolor=0)
+    # Subsample for speed
+    if len(flat) > MAX_PIXELS_FOR_WEIBULL:
+        idx = np.random.randint(0, len(flat), size=MAX_PIXELS_FOR_WEIBULL)
+        flat = flat[idx]
 
-    obj_np_small = (np.array(obj, dtype=np.float32) / 255.0)
-    # binarize a bit to keep edges soft but remove haze
-    obj_np_small = (obj_np_small > 0.5).astype(np.float32)
+    low_thr = np.quantile(flat, SHADOW_QUANTILE)
+    high_thr = np.quantile(flat, OBJECT_QUANTILE)
 
-    # 2) Paste onto full-size canvas at a random location
-    mask_canvas = np.zeros((H, W), dtype=np.float32)
-    h, w = obj_np_small.shape
-    # choose top-left so the object fully fits
-    max_oy = max(0, H - h)
-    max_ox = max(0, W - w)
-    oy = random.randint(0, max_oy) if max_oy > 0 else 0
-    ox = random.randint(0, max_ox) if max_ox > 0 else 0
-    mask_canvas[oy:oy+h, ox:ox+w] = np.maximum(mask_canvas[oy:oy+h, ox:ox+w], obj_np_small)
+    shadow_pixels = flat[flat <= low_thr]
+    object_pixels = flat[flat >= high_thr]
 
-    # 3) Simple highlight on the object
-    comp = bg*(1.0 - mask_canvas) + mask_canvas*np.clip(bg*highlight_gain, 0, 1)
+    if len(shadow_pixels) < 500:
+        shadow_pixels = flat[flat <= np.median(flat)]
+    if len(object_pixels) < 500:
+        object_pixels = flat[flat >= np.median(flat)]
 
-    # 4) Build a small shadow (projected, short, soft)
-    ys, xs = np.where(mask_canvas > 0.5)
-    if xs.size > 0:
-        obj_w = xs.max() - xs.min() + 1
-        obj_h = ys.max() - ys.min() + 1
-        L = int(shadow_scale * max(obj_w, obj_h))  # short-ish
-        theta = math.radians(angle_deg)
-        dx = int(round(math.cos(theta) * L))
-        dy = int(round(math.sin(theta) * L))
+    # Fit Weibull; floc=0 to avoid negative loc drifting
+    c_sh, loc_sh, scale_sh = weibull_min.fit(shadow_pixels, floc=0)
+    c_obj, loc_obj, scale_obj = weibull_min.fit(object_pixels, floc=0)
 
-        # draw a projected swath by stepping from object towards (dx,dy)
-        shadow = np.zeros_like(mask_canvas, dtype=np.float32)
-        steps = max(abs(dx), abs(dy), 1)
-        for t in range(steps+1):
-            yi = np.clip(ys + int(round(dy * t/steps)), 0, H-1)
-            xi = np.clip(xs + int(round(dx * t/steps)), 0, W-1)
-            shadow[yi, xi] = 1.0
+    dist_shadow = (c_sh, loc_sh, scale_sh)
+    dist_object = (c_obj, loc_obj, scale_obj)
+    return dist_object, dist_shadow
 
-        # soften penumbra and normalize
-        shadow = _np_gaussian_blur(shadow, shadow_blur_sigma)
-        if shadow.max() > 0:
-            shadow = shadow / shadow.max()
+def sample_from_weibull(dist_params, n):
+    c, loc, scale = dist_params
+    if n <= 0:
+        return np.array([], dtype=np.float32)
+    samples = weibull_min.rvs(c, loc=loc, scale=scale, size=n)
+    samples = np.clip(samples, 0, 255).astype(np.float32)
+    return samples
 
-        # do NOT darken the object body itself
-        inv_obj = 1.0 - mask_canvas
-        comp = comp * (1.0 - (shadow * inv_obj) * shadow_darkness)
+# --- Utility functions ---
+def semisynthetic(output_dir, background_dir, object_dir):
+    print("--- Starting Procedural Semi-Synthetic Pipeline (Weibull-based) ---")
+    os.makedirs(output_dir, exist_ok=True)
 
-    return np.clip(comp, 0, 1).astype(np.float32)
+    try:
+        background_files = [
+            f for f in os.listdir(background_dir)
+            if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+        ]
+        object_files = [
+            f for f in os.listdir(object_dir)
+            if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+        ]
+    except FileNotFoundError as e:
+        print(f"**ERROR:** Path check failed. Please verify the directory paths: {e}")
+        return
 
+    # Load object masks (L, single-channel; values assumed 0=shadow, 255=object, mid=neutral)
+    objects = []
+    for obj_file in object_files:
+        try:
+            obj_mask = Image.open(os.path.join(object_dir, obj_file)).convert("L")
+            objects.append(obj_mask)
+        except Exception as e:
+            print(f"!! Error loading Object Mask {obj_file}: {e}")
 
-# -------------------------------
-# Step 5: Weibull speckle
-# -------------------------------
-def fit_weibull(data, max_iters=20):
-    x = data.flatten(); x = x[x>0]
-    k = 1.5
-    for _ in range(max_iters):
-        xk = x**k
-        A = (xk*np.log(x)).sum()/xk.sum()
-        B = np.log(x).mean()
-        g = 1/k + B - A
-        k -= g/( -1/k**2 - ( (xk*(np.log(x)**2)).sum()*xk.sum() - (xk*np.log(x)).sum()**2 )/(xk.sum()**2) )
-        k = max(k, 0.5)
-    lam = (x**k).mean()**(1/k)
-    return k, lam
+    if not objects:
+        print("**ERROR:** Could not load any Object Masks.")
+        return
 
-def apply_weibull_speckle(img, k, lam):
-    H,W = img.shape
-    U = np.random.rand(H,W)
-    speckle = lam * (-np.log(1-U+1e-8))**(1/k)
-    speckle /= speckle.mean()
-    return np.clip(img * speckle, 0, 1)
+    for bg_idx, bg_file in tqdm(enumerate(background_files), total=len(background_files)):
+        background_path = os.path.join(background_dir, bg_file)
+        composite_pil = Image.open(background_path).convert("RGB")
+        bg_np = np.array(composite_pil, dtype=np.float32)
+        bg_height, bg_width, _ = bg_np.shape
 
-# -------------------------------
-# Full pipeline
-# -------------------------------
-def semi_synthetic(mask_path, ref_path, out_path):
-    ref_img = Image.open(ref_path)
-    mask_img = Image.open(mask_path)
+        # Fit Weibull for this background
+        dist_object, dist_shadow = fit_weibull_from_background(bg_np)
 
-    shadow, obj, bg, ref = adaptive_3class_segmentation(ref_img)
-    patch = random_bg_crop(bg, ref, crop_size=(128,128))
-    comp  = place_mask_with_shadow(patch, mask_img)
-    k, lam = fit_weibull(patch*255.0)
-    final = apply_weibull_speckle(comp, k, lam)
+        # Work copy for blending (NumPy)
+        composite_np = bg_np.copy()
 
-    img = (final*255).astype(np.uint8)
-    cv2.imwrite(out_path, img)
-    print(f"Saved: {out_path}, Weibull k={k:.2f}, λ={lam:.2f}")
-    
-    return img
+        for _ in range(NUM_OBJECTS_PER_BG):
+            random_object_mask = random.choice(objects)
+
+            # Random scale relative to background width
+            scale_factor = random.uniform(MIN_SCALE_FACTOR, MAX_SCALE_FACTOR)
+            new_obj_width = int(bg_width * scale_factor)
+
+            w_percent = new_obj_width / float(random_object_mask.size[0])
+            new_obj_height = int(float(random_object_mask.size[1]) * w_percent)
+
+            if new_obj_width <= 0 or new_obj_height <= 0:
+                continue
+
+            resized_mask = random_object_mask.resize(
+                (new_obj_width, new_obj_height),
+                Image.Resampling.NEAREST
+            )
+
+            # Random rotation with neutral fill
+            fill_color = 128
+            rotated_mask = resized_mask.rotate(
+                random.randint(0, 359),
+                expand=True,
+                resample=Image.Resampling.NEAREST,
+                fillcolor=fill_color
+            )
+
+            mask_np = np.array(rotated_mask, dtype=np.float32)
+            obj_h, obj_w = mask_np.shape
+
+            # --- Restrict placement to leftmost 20% or rightmost 20% ---
+            band_width = int(0.2 * bg_width)
+
+            # Left band: x in [0, band_width - obj_w]
+            left_start_min = 0
+            left_start_max = band_width - obj_w
+
+            # Right band: x in [0.8*W, W - obj_w]
+            right_start_min = int(0.8 * bg_width)
+            right_start_max = bg_width - obj_w
+
+            valid_bands = []
+            if left_start_max >= left_start_min:
+                valid_bands.append(("left", left_start_min, left_start_max))
+            if right_start_max >= right_start_min:
+                valid_bands.append(("right", right_start_min, right_start_max))
+
+            if not valid_bands:
+                # Cannot place object on this background size
+                continue
+
+            band_name, x_min_allowed, x_max_allowed = random.choice(valid_bands)
+            random_x = random.randint(x_min_allowed, x_max_allowed)
+
+            # y anywhere vertically
+            max_y = bg_height - obj_h
+            if max_y <= 0:
+                continue
+            random_y = random.randint(0, max_y)
+
+            # --- Active mask for object/shadow ---
+
+            is_object = np.logical_and(
+                mask_np >= OBJECT_COLOR - ACTIVE_COLOR_TOLERANCE,
+                mask_np <= OBJECT_COLOR + ACTIVE_COLOR_TOLERANCE
+            )
+            is_shadow = np.logical_and(
+                mask_np >= SHADOW_COLOR - ACTIVE_COLOR_TOLERANCE,
+                mask_np <= SHADOW_COLOR + ACTIVE_COLOR_TOLERANCE
+            )
+            is_active = np.logical_or(is_object, is_shadow)
+
+            if not np.any(is_active):
+                continue
+
+            alpha_np = np.where(is_active, 255, 0).astype(np.uint8)
+            alpha_channel_pil = Image.fromarray(alpha_np, mode='L')
+
+            # --- Crop background area ---
+            y1, y2 = random_y, random_y + obj_h
+            x1, x2 = random_x, random_x + obj_w
+            bg_area_np = composite_np[y1:y2, x1:x2, :].copy()
+
+            # --- Sample intensities from Weibull for object & shadow ---
+            num_obj_pix = int(is_object.sum())
+            num_sh_pix = int(is_shadow.sum())
+
+            obj_samples = sample_from_weibull(dist_object, num_obj_pix)
+            sh_samples = sample_from_weibull(dist_shadow, num_sh_pix)
+
+            # Create 2D intensity maps
+            obj_intensity = np.zeros_like(mask_np, dtype=np.float32)
+            sh_intensity = np.zeros_like(mask_np, dtype=np.float32)
+
+            if num_obj_pix > 0:
+                obj_intensity[is_object] = obj_samples
+            if num_sh_pix > 0:
+                sh_intensity[is_shadow] = sh_samples
+
+            # --- Apply intensities to RGB channels (SSS is effectively grayscale) ---
+            blended_area_np = bg_area_np.copy()
+            for c in range(3):  # R,G,B
+                ch = blended_area_np[:, :, c]
+                # object pixels
+                ch = np.where(is_object, obj_intensity, ch)
+                # shadow pixels
+                ch = np.where(is_shadow, sh_intensity, ch)
+                blended_area_np[:, :, c] = ch
+
+            # Convert blended patch to PIL and paste with alpha
+            blended_object_rgb_pil = Image.fromarray(
+                np.uint8(np.clip(blended_area_np, 0, 255)),
+                mode='RGB'
+            )
+            blended_object_rgba_pil = Image.merge(
+                'RGBA',
+                blended_object_rgb_pil.split() + (alpha_channel_pil,)
+            )
+
+            composite_pil.paste(
+                blended_object_rgba_pil,
+                (random_x, random_y),
+                mask=blended_object_rgba_pil
+            )
+
+        # Save result
+        output_path = os.path.join(output_dir, f"semisynth-{bg_idx:04d}.png")
+        composite_pil.save(output_path, quality=95)
+        # print(f"Saved: {output_path}")
+
+    print("\nProcessing complete!")

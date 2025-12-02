@@ -1,23 +1,10 @@
-from utils import *
-import matplotlib.pyplot as plt
+from utils import semisynthetic
+import os
 
-from tqdm import tqdm
-import random
-import glob
+DATA_DIR = 'C:/Users/User/OneDrive/Documents/GitHub/sonar_project'
 
-ROOT_DIR = "C:/Users/User/Downloads/underwater_sonar"
+BACKGROUND_DIR = os.path.join(DATA_DIR, "data/klsg_dataset/mine")
+OBJECT_DIR = os.path.join(DATA_DIR, "data/masked/plane")
+OUTPUT_DIR = os.path.join(DATA_DIR, "synthetic/Procedural/results")
 
-ref_path  = glob.glob(f"{ROOT_DIR}/klsg_dataset/plane/*.png")
-mask_images = glob.glob(f"{ROOT_DIR}/masked/plane/*.jpg")
-
-counter = 0
-for path in tqdm(mask_images):
-    ref = random.choice(ref_path)
-    for i in range(10):
-        out = semi_synthetic(
-            ref_path=ref,
-            mask_path=path,
-            out_path=f"{ROOT_DIR}/synthetic/result/synth_plane-{str(counter+1).zfill(3)}.png"
-        )
-        counter += 1
-        
+semisynthetic(OUTPUT_DIR, BACKGROUND_DIR, OBJECT_DIR)
