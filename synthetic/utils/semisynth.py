@@ -4,9 +4,9 @@ import os
 
 print(os.getcwd())
 
-from utils.output import save_output_image, save_yolo_annotation
-from utils.position import rotate_object_and_mask, sample_valid_position, bbox_from_mask
-from utils.blending import composite_foreground, match_local_stats
+from synthetic.utils.output import save_output_image, save_yolo_annotation
+from synthetic.utils.position import rotate_object_and_mask, sample_valid_position, bbox_from_mask
+from synthetic.utils.blending import composite_foreground, match_local_stats
 
 CLASS_MAP = {
     "plane": 0,
@@ -23,21 +23,29 @@ CLASS_MAP = {
 # ==============
 
 def refine_mask(optical_img, mask):
-    # Apply the conditional conversion to the mask
+    # Ensure mask values are within the expected range
+    mask = np.clip(mask, 0, 255)
+
+    # Refine the mask to isolate the object
     mask[(mask > 0) & (mask < 50)] = 0
-    mask[(mask > 200) & (mask < 255)] = 255
+    mask[(mask > 200) & (mask <= 255)] = 255
     mask[(mask >= 50) & (mask <= 200)] = 127
 
-    # Visualize the modified mask
+    # Create a canvas to blend the optical image with the mask
     canvas = np.zeros_like(optical_img)
     canvas[mask == 255] = optical_img[mask == 255]
 
-    # check masking area
+    # Debugging: Check the mask and canvas dimensions
+    if canvas.sum() == 0:
+        print("Warning: Canvas is empty after applying the mask.")
+
+    # Ensure the object area is not too large
     ys, xs = np.where(mask == 255)
-    width = xs.max() - xs.min()
-    height = ys.max() - ys.min()
-    if width*height > mask.size / 3:
-        canvas = cv2.resize(canvas, (128, 128))
+    if len(ys) > 0 and len(xs) > 0:
+        width = xs.max() - xs.min()
+        height = ys.max() - ys.min()
+        if width * height > mask.size / 3:
+            canvas = cv2.resize(canvas, (128, 128))
 
     return canvas
 

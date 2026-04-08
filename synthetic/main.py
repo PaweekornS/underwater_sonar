@@ -3,7 +3,7 @@ import cv2
 from tqdm import tqdm
 import random
 
-from utils.semisynth import refine_mask, place_object_on_sss_background
+from synthetic.utils.semisynth import refine_mask, place_object_on_sss_background
 
 OBJECT = "victim"
 BASE_DIR = "./data/segment_prep"
