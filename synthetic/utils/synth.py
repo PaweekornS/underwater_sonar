@@ -84,7 +84,7 @@ def place_single_object(
 
     if save:
         save_output_image(composed, filename, f"{output_dir}/images")
-        save_yolo_annotation(bbox_bg, bg_path, filename, f"{output_dir}/labels", class_id=class_id)
+        save_yolo_annotation(bbox_bg, composed.shape, filename, f"{output_dir}/labels", class_id=class_id)
 
     return composed, bbox_bg
 
