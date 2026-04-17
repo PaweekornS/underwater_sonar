@@ -10,8 +10,8 @@ import torch
 
 
 # Constraints
-REAL_DIR = "./data/..."
-FAKE_DIR = "./synthetic/Procedural/results/..."
+REAL_DIR = "."
+FAKE_DIR = "."
 
 # ===============
 # Utility

@@ -1,6 +1,18 @@
+import numpy as np
 import shutil
 import os
 import cv2
+
+def bbox_from_mask(mask):
+    """Compute tight bounding box from binary mask."""
+    ys, xs = np.where(mask > 0)
+    if len(xs) == 0:
+        raise ValueError("Empty mask, cannot compute bbox.")
+
+    x_min, x_max = xs.min(), xs.max()
+    y_min, y_max = ys.min(), ys.max()
+
+    return x_min, y_min, x_max, y_max
 
 def save_output_image(img, filename, output_dir):
     """Save foreground image to output directory."""
@@ -44,3 +56,21 @@ def save_yolo_annotation(bbox, bg_path, filename, output_dir, class_id=0):
     except:
         with open(save_path, "w") as f:
             f.write(annotation_line)
+            
+def save_yolo_multi_annotation(bboxes, class_ids, img_shape, filename, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, filename + ".txt")
+
+    img_h, img_w = img_shape
+
+    with open(path, "w") as f:
+        for bbox, class_id in zip(bboxes, class_ids):
+            x_min, y_min, x_max, y_max = bbox
+
+            cx = (x_min + x_max) / 2 / img_w
+            cy = (y_min + y_max) / 2 / img_h
+            w  = (x_max - x_min) / img_w
+            h  = (y_max - y_min) / img_h
+
+            f.write(f"{class_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}\n")
+            

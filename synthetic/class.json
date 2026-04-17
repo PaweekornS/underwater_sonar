@@ -1,0 +1,7 @@
+{
+    "cylinder": 0,
+    "manta": 1,
+    "plane": 2,
+    "ship": 3,
+    "victim": 4
+}
