@@ -1,5 +1,5 @@
-from optical import sample_valid_position, filter_object, rotate_object, construct_shadow
-from output import save_output_image, save_yolo_annotation, bbox_from_mask, save_yolo_multi_annotation
+from utils.optical import sample_valid_position, filter_object, rotate_object, construct_shadow
+from utils.output import save_output_image, save_yolo_annotation, bbox_from_mask, save_yolo_multi_annotation
 
 import numpy as np
 import random
