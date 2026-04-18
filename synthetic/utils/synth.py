@@ -121,7 +121,7 @@ def place_multiple_objects(
     # Optional occupancy mask (for overlap control)
     occupancy = np.zeros_like(bg_img, dtype=np.uint8)
 
-    num_objects = random.randint(1, max_objects)
+    num_objects = random.randint(2, max_objects)
 
     for i in range(num_objects):
         segment_path = random.choice(segment_paths)
