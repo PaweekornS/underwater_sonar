@@ -1,6 +1,7 @@
 import numpy as np
 import random
 import cv2
+import os
 
 def roi_thresholding(segment_path):
     segment = cv2.imread(segment_path, 0)
@@ -17,7 +18,15 @@ def filter_object(segment_path):
     obj_canvas[ segment == 255 ] = img[ segment == 255 ]
     
     # --- Random square resize (32 to 128) ---
-    size = random.randint(32, 64)
+    class_name = os.path.basename(segment_path)[:-4]
+    
+    if "ship" in class_name:
+        size = random.randint(96, 128)
+    elif "plane" in class_name:
+        size = random.randint(64, 96)
+    else:
+        size = random.randint(64, 128)
+        
     obj_canvas = cv2.resize(obj_canvas, (size, size), interpolation=cv2.INTER_LINEAR)
     return obj_canvas
 
