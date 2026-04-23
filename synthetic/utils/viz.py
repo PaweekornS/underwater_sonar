@@ -1,26 +1,6 @@
 import matplotlib.pyplot as plt
 import cv2
 
-def visualize_bbox(image, bbox, color=(255, 0, 0), thickness=2, show=True, save_path=None):
-    """
-    Draws a bounding box on the image.
-    """
-    x0, y0, x1, y1 = bbox
-
-    # If grayscale, convert to BGR for colored drawing
-    if len(image.shape) == 2:
-        image_vis = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-    else:
-        image_vis = image.copy()
-
-    # Draw rectangle
-    cv2.rectangle(image_vis, (x0, y0), (x1, y1), color, thickness)
-
-    # Optional display
-    if show:
-        plt.imshow(image_vis)
-        plt.show()
-
 def visualize_bboxes(
     image,
     bboxes,
@@ -38,8 +18,7 @@ def visualize_bboxes(
         bboxes: List of bounding boxes
                 Each bbox can be:
                 - (x0, y0, x1, y1)
-                - (x0, y0, x1, y1, class_id)
-                - (x0, y0, x1, y1, class_id, score)
+                - (class_id, x0, y0, x1, y1)
         color: Default box color
         thickness: Line thickness
         show: Whether to display the image
@@ -59,13 +38,9 @@ def visualize_bboxes(
             x0, y0, x1, y1 = bbox
             label = None
         elif len(bbox) == 5:
-            x0, y0, x1, y1, class_id = bbox
-            label = str(class_id)
+            class_id, x0, y0, x1, y1 = bbox
             if class_names:
-                label = class_names[class_id]
-        elif len(bbox) == 6:
-            x0, y0, x1, y1, class_id, score = bbox
-            label = f"{class_names[class_id] if class_names else class_id}: {score:.2f}"
+                label = class_names[int(class_id)]
         else:
             raise ValueError("Invalid bbox format")
 
@@ -75,14 +50,9 @@ def visualize_bboxes(
         # Draw label if exists
         if label:
             cv2.putText(
-                image_vis,
-                label,
-                (x0, y0 - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                color,
-                1,
-                cv2.LINE_AA
+                image_vis, label, org=(x0, y0 - 5), 
+                fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=0.5,
+                color=color, thickness=1, lineType=cv2.LINE_AA
             )
 
     # Save if needed
