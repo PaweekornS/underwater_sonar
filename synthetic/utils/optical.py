@@ -17,11 +17,11 @@ def filter_object(segment_path):
     obj_canvas[ segment == 255 ] = img[ segment == 255 ]
     
     # --- Random square resize (32 to 128) ---
-    size = random.randint(32, 128)
+    size = random.randint(32, 64)
     obj_canvas = cv2.resize(obj_canvas, (size, size), interpolation=cv2.INTER_LINEAR)
     return obj_canvas
 
-def sample_valid_position(bg_shape, fg_shape, side="random"):
+def sample_valid_position(bg_shape, fg_shape, side="random", threshold=0.2):
     bg_h, bg_w = bg_shape
     fg_h, fg_w = fg_shape
 
@@ -42,10 +42,10 @@ def sample_valid_position(bg_shape, fg_shape, side="random"):
 
     if side == "left":
         x_min = 0
-        x_max = int(0.2 * bg_w) - fg_w
+        x_max = int(threshold * bg_w) - fg_w
 
     else:  # right
-        x_min = int(0.8 * bg_w)
+        x_min = int((1-threshold) * bg_w)
         x_max = max_x_global
 
     # --- Clamp to valid global bounds ---
@@ -54,12 +54,6 @@ def sample_valid_position(bg_shape, fg_shape, side="random"):
 
     # --- Strict validity check ---
     if x_max < x_min:
-        # No valid position in requested side → FAIL HARD or fallback (your choice)
-
-        # Option A (strict): raise error
-        # raise ValueError("No valid placement in requested side")
-
-        # Option B (controlled fallback): clamp to nearest valid edge
         if side == "left":
             x = 0
         else:

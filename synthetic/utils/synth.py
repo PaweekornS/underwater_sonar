@@ -12,6 +12,52 @@ with open(class_json_path, "r") as f:
     CLASS = json.load(f)
     f.close()
     
+def remove_predefined_objects(image_path):
+    """
+    Reads a YOLO label file, masks the objects in the image with 0 (black),
+    and returns the cleaned background image.
+    """
+    # 1. Load the background image
+    bg_img = cv2.imread(image_path, 0)
+    if bg_img is None:
+        raise FileNotFoundError(f"Could not load image: {image_path}")
+
+    h, w = bg_img.shape
+
+    # 2. Check if label file exists
+    label_path = image_path.replace("images", "labels").replace(".jpg", ".txt")
+    if not os.path.exists(label_path):
+        return bg_img  # If no objects, return original image
+
+    # 3. Process labels
+    with open(label_path, 'r') as f:
+        lines = f.readlines()
+
+    for line in lines:
+        # YOLO format: class x_center y_center width height
+        parts = line.strip().split()
+        if len(parts) < 5:
+            continue
+
+        _, cx, cy, bw, bh = map(float, parts)
+
+        # 4. Convert normalized to pixel coordinates
+        x1 = int((cx - bw / 2) * w)
+        y1 = int((cy - bh / 2) * h)
+        x2 = int((cx + bw / 2) * w)
+        y2 = int((cy + bh / 2) * h)
+
+        # 5. Mask out the area (set to 0 for black)
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(w, x2), min(h, y2)
+
+        # Create a mask for the area
+        mask = np.zeros(bg_img.shape, dtype=np.uint8)
+        mask[y1:y2, x1:x2] = 255
+        # Fill the area with surrounding texture data
+        bg_img = cv2.inpaint(bg_img, mask, 3, cv2.INPAINT_TELEA)
+    return bg_img
+    
 def composite_foreground(bg_img, fg_img, shadow, top, left):
     out = bg_img.copy()
 
@@ -48,7 +94,7 @@ def place_single_object(
     output_dir="./yolo_data", 
     save=True
 ):
-    bg_img = cv2.imread(bg_path, 0)
+    bg_img = remove_predefined_objects(bg_path)
     bg_img = cv2.resize(bg_img, (640, 640), cv2.INTER_NEAREST)
     
     optical_img = filter_object(segment_path)
@@ -62,7 +108,8 @@ def place_single_object(
     top, left = sample_valid_position(
         bg_shape=(bg_h, bg_w),
         fg_shape=(fg_h, fg_w),
-        side=side
+        side=side,
+        threshold=0.2
     )
     
     # --- shadow construction ---    
@@ -73,15 +120,15 @@ def place_single_object(
     
     # --- create output ---
     composed = composite_foreground(bg_img, optical_img, shadow, top, left)
-
-    combined_mask = (optical_img > 0) | (shadow > 0)
-    x0, y0, x1, y1 = bbox_from_mask(combined_mask)
-    bbox_bg = (x0 + left, y0 + top, x1 + left, y1 + top)
-
-    # --- save artifact ---
     class_label = os.path.basename(segment_path).split("-")[0]
     class_id = classes[class_label]
+    
+    # --- bbox ---
+    combined_mask = (optical_img > 0) | (shadow > 0)
+    x0, y0, x1, y1 = bbox_from_mask(combined_mask)
+    bbox_bg = (class_id, x0 + left, y0 + top, x1 + left, y1 + top)
 
+    # --- save artifact ---
     if save:
         save_output_image(composed, filename, f"{output_dir}/images")
         save_yolo_annotation(bbox_bg, composed.shape, filename, f"{output_dir}/labels", class_id=class_id)
@@ -108,7 +155,7 @@ def place_multiple_objects(
     bg_path = random.choice(bg_paths)
 
     # --- base background ---
-    bg_img = cv2.imread(bg_path, 0)
+    bg_img = remove_predefined_objects(bg_path)
     bg_img = cv2.resize(bg_img, (640, 640), cv2.INTER_NEAREST)
 
     composed = bg_img.copy()
@@ -140,7 +187,8 @@ def place_multiple_objects(
         top, left = sample_valid_position(
             bg_shape=(bg_h, bg_w),
             fg_shape=(fg_h, fg_w),
-            side=side
+            side=side,
+            threshold=0.2
         )
 
         # --- shadow ---
@@ -173,16 +221,16 @@ def place_multiple_objects(
         obj_mask = ((optical_img > 0) | (shadow > 0)).astype(np.uint8)
         occupancy[top:top+fg_h, left:left+fg_w][obj_mask > 0] = 1
 
-        # --- bbox ---
-        x0, y0, x1, y1 = bbox_from_mask(obj_mask)
-        bbox_bg = (x0 + left, y0 + top, x1 + left, y1 + top)
-
-        bboxes.append(bbox_bg)
-
         # --- class ---
         class_label = os.path.basename(segment_path).split("-")[0]
         class_id = classes[class_label]
         class_ids.append(class_id)
+        
+        # --- bbox ---
+        x0, y0, x1, y1 = bbox_from_mask(obj_mask)
+        bbox_bg = (class_id, x0 + left, y0 + top, x1 + left, y1 + top)
+
+        bboxes.append(bbox_bg)
 
     # --- save outputs ---
     if save:
