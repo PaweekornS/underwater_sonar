@@ -21,11 +21,11 @@ def save_output_image(img, filename, output_dir):
     cv2.imwrite(save_path, img)
     return save_path
 
-def save_yolo_annotation(bbox, img_shape, filename, output_dir, class_id=0):
+def save_yolo_annotation(bbox, img_shape, filename, output_dir):
     os.makedirs(output_dir, exist_ok=True)
 
     img_h, img_w = img_shape
-    x_min, y_min, x_max, y_max = bbox
+    class_id, x_min, y_min, x_max, y_max = bbox
 
     # --- absolute ---
     center_x = (x_min + x_max) / 2.0
@@ -53,15 +53,15 @@ def save_yolo_annotation(bbox, img_shape, filename, output_dir, class_id=0):
     with open(save_path, "w") as f:
         f.write(annotation_line)
             
-def save_yolo_multi_annotation(bboxes, class_ids, img_shape, filename, output_dir):
+def save_yolo_multi_annotation(bboxes, img_shape, filename, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, filename + ".txt")
 
     img_h, img_w = img_shape
 
     with open(path, "w") as f:
-        for bbox, class_id in zip(bboxes, class_ids):
-            x_min, y_min, x_max, y_max = bbox
+        for bbox in bboxes:
+            class_id, x_min, y_min, x_max, y_max = bbox
 
             cx = (x_min + x_max) / 2 / img_w
             cy = (y_min + y_max) / 2 / img_h

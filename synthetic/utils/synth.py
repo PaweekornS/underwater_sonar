@@ -131,7 +131,7 @@ def place_single_object(
     # --- save artifact ---
     if save:
         save_output_image(composed, filename, f"{output_dir}/images")
-        save_yolo_annotation(bbox_bg, composed.shape, filename, f"{output_dir}/labels", class_id=class_id)
+        save_yolo_annotation(bbox_bg, composed.shape, filename, f"{output_dir}/labels")
 
     return composed, bbox_bg
 
@@ -237,7 +237,6 @@ def place_multiple_objects(
         save_output_image(composed, filename, f"{output_dir}/images")
         save_yolo_multi_annotation(
             bboxes,
-            class_ids,
             composed.shape,
             filename,
             f"{output_dir}/labels"
