@@ -21,9 +21,11 @@ def filter_object(segment_path):
     class_name = os.path.basename(segment_path)[:-4]
     
     if "ship" in class_name:
-        size = random.randint(200, 350)
+        size = random.randint(150, 200)
     elif "plane" in class_name:
-        size = random.randint(195, 220)
+        size = random.randint(80, 100)
+    elif "fish" in class_name:
+        size = 256
     else:
         size = random.randint(64, 128)
         

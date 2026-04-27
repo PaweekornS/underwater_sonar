@@ -1,7 +1,6 @@
 {
-    "cylinder": 0,
-    "manta": 1,
-    "plane": 2,
-    "ship": 3,
-    "victim": 4
+    "plane": 0,
+    "ship": 1,
+    "fish": 2,
+    "victim": 3
 }

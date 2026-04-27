@@ -74,15 +74,33 @@ def composite_foreground(bg_img, fg_img, shadow, top, left):
 
     roi_float = roi.astype(np.float32)
 
+    # Apply shadow to ROI (as before)
     roi_float[shadow_mask] = (
         (1 - shadow_norm[shadow_mask]) * roi_float[shadow_mask] +
         shadow_norm[shadow_mask] * bg_min
     )
 
-    roi = roi_float.astype(np.uint8)
+    # --- Soft alpha blending for object edges ---
+    mask_float = (obj_mask.astype(np.float32))
+    # Use a fairly large blur to soften edges; kernel tuned for 640x640 images
+    alpha = cv2.GaussianBlur(mask_float, (31, 31), 0)
 
-    # --- Object overwrite ---
-    roi[obj_mask] = fg_img[obj_mask]
+    # Normalize alpha to [0,1] safely
+    amax = alpha.max()
+    if amax > 0:
+        alpha = alpha / amax
+
+    # Convert images to float for blending
+    fg_float = fg_img.astype(np.float32)
+
+    # Blend: alpha * fg + (1-alpha) * roi
+    blended = (alpha * fg_float) + ((1.0 - alpha) * roi_float)
+
+    # Where there is no object at all, keep original ROI to avoid introducing artifacts
+    no_obj = (mask_float == 0)
+    blended[no_obj] = roi_float[no_obj]
+
+    roi = np.clip(blended, 0, 255).astype(np.uint8)
 
     out[top:top+h, left:left+w] = roi
     return out
