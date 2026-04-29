@@ -57,52 +57,53 @@ def remove_predefined_objects(image_path):
         # Fill the area with surrounding texture data
         bg_img = cv2.inpaint(bg_img, mask, 3, cv2.INPAINT_TELEA)
     return bg_img
-    
+
 def composite_foreground(bg_img, fg_img, shadow, top, left):
     out = bg_img.copy()
-
     h, w = fg_img.shape
     roi = out[top:top+h, left:left+w]
 
-    obj_mask = fg_img > 0
-    shadow_mask = shadow > 0
+    obj_mask = (fg_img > 0).astype(np.float32)
+    shadow_mask = (shadow > 0).astype(np.float32)
+    
+    # 1. Prepare Foreground
+    fg_float = fg_img.astype(np.float32)
+    bg_pixels = roi[roi > 0]
+    
+    # Calculate Intensity Alignment (The "Background-Matched" version)
+    if len(bg_pixels) > 0:
+        fg_pixels = fg_img[fg_img > 0]
+        mean_fg, std_fg = np.mean(fg_pixels), np.std(fg_pixels)
+        mean_bg, std_bg = np.mean(bg_pixels), np.std(bg_pixels)
+        
+        fg_aligned = (fg_float - mean_fg) / (std_fg + 1e-6)
+        fg_aligned = (fg_aligned * std_bg) + mean_bg
+    else:
+        fg_aligned = fg_float
 
-    # --- Shadow: anchor to darkest background ---
+    # 2. Stochastic Mixing (The "Feature Preservation" step)
+    mix_ratio = np.random.uniform(0.5, 0.7) 
+    
+    # Blend aligned version (for context) with original version (for sharp features)
+    final_fg = (mix_ratio * fg_aligned) + ((1.0 - mix_ratio) * fg_float)
+    final_fg = np.clip(final_fg, 0, 255)
+
+    # 3. Shadow logic
+    bg_min = np.percentile(bg_pixels, 2) if len(bg_pixels) > 0 else 0
+    roi_float = roi.astype(np.float32)
     shadow_norm = shadow.astype(np.float32) / 255.0
 
-    bg_min = np.percentile(bg_img, 2)  # robust noise floor
-
-    roi_float = roi.astype(np.float32)
-
-    # Apply shadow to ROI (as before)
-    roi_float[shadow_mask] = (
-        (1 - shadow_norm[shadow_mask]) * roi_float[shadow_mask] +
-        shadow_norm[shadow_mask] * bg_min
+    roi_float[shadow_mask == 1] = (
+        (1 - shadow_norm[shadow_mask == 1]) * roi_float[shadow_mask == 1] +
+        shadow_norm[shadow_mask == 1] * bg_min
     )
 
-    # --- Soft alpha blending for object edges ---
-    mask_float = (obj_mask.astype(np.float32))
-    # Use a fairly large blur to soften edges; kernel tuned for 640x640 images
-    alpha = cv2.GaussianBlur(mask_float, (31, 31), 0)
-
-    # Normalize alpha to [0,1] safely
-    amax = alpha.max()
-    if amax > 0:
-        alpha = alpha / amax
-
-    # Convert images to float for blending
-    fg_float = fg_img.astype(np.float32)
-
-    # Blend: alpha * fg + (1-alpha) * roi
-    blended = (alpha * fg_float) + ((1.0 - alpha) * roi_float)
-
-    # Where there is no object at all, keep original ROI to avoid introducing artifacts
-    no_obj = (mask_float == 0)
-    blended[no_obj] = roi_float[no_obj]
-
-    roi = np.clip(blended, 0, 255).astype(np.uint8)
-
-    out[top:top+h, left:left+w] = roi
+    # 4. Soft Alpha Blending
+    alpha = cv2.GaussianBlur(obj_mask, (5, 5), 0)
+    blended = (alpha * final_fg) + ((1.0 - alpha) * roi_float)
+    
+    out[top:top+h, left:left+w] = np.clip(blended, 0, 255).astype(np.uint8)
+    
     return out
 
 def place_single_object(
