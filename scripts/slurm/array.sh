@@ -1,6 +1,6 @@
 #!/bin/bash
-# Run one line of a job list per array task, 1 GPU each.
-# Usage: sbatch --array=1-$(wc -l < jobs.txt) [-p gpu-devel -t 2:00:00] scripts/slurm/array.sh jobs.txt
+# Run PACK lines of a job list concurrently on one GPU per array task.
+# Do not sbatch this directly: submit through scripts/slurm/submit.sh (caps running GPUs at 4).
 #SBATCH -p gpu
 #SBATCH -N 1 -c 16
 #SBATCH --gpus-per-task=1
@@ -10,11 +10,17 @@
 #SBATCH -J sss
 #SBATCH -o /scratch/lt200304-dipmt/paweekorn/logs/%x_%A_%a.out
 
-set -euo pipefail
+set -uo pipefail
 ml Mamba/23.11.0-0
 conda activate unsloth_env
 export YOLO_OFFLINE=1
 cd /project/lt200304-dipmt/paweekorn/sss-project
-cmd=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "$1")
-echo "$cmd"
-eval "$cmd"
+PACK=${PACK:-1}
+first=$(( (SLURM_ARRAY_TASK_ID - 1) * PACK + 1 ))
+for n in $(seq "$first" $(( first + PACK - 1 ))); do
+    cmd=$(sed -n "${n}p" "$1")
+    [ -z "$cmd" ] && continue
+    echo "[$n] $cmd"
+    eval "$cmd --workers $(( 16 / PACK ))" > "/scratch/lt200304-dipmt/paweekorn/logs/line_${SLURM_ARRAY_JOB_ID}_${n}.log" 2>&1 &
+done
+wait

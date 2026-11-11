@@ -1,6 +1,6 @@
 """Normalize the three SSS domains into one layout and write fixed split files.
 
-Output (not in git):  <out>/<domain>/images/<id>.<ext>  (symlink to raw)
+Output (not in git):  <out>/<domain>/images/<id>.png    (single-channel intensity)
                       <out>/<domain>/labels/<id>.txt    (YOLO, unified class ids)
                       <out>/<domain>/meta.csv
 Output (in git):      data/splits/<domain>/{train,val,test}.txt
@@ -12,15 +12,18 @@ Usage: python scripts/prepare_data.py --raw /scratch/.../sonar-data --out /scrat
 import argparse
 import csv
 import json
-import os
 import random
 import re
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
 import imagehash
 import numpy as np
 from PIL import Image
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from synth.geometry import ui_text_mask  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SPLIT_SEED = 0
@@ -32,6 +35,8 @@ DOMAINS = {
     "cylinder2": {"names": ["cylinder", "manta"], "remap": {0: 0, 1: 0, 2: 1}},
     "mine": {"names": ["MILCO", "NOMBO"], "remap": {0: 0, 1: 1}},
     "aquascan": {"names": ["human"], "remap": {0: 0}},
+    # Leaky reference split that mimics prior work: no dedup, downscaled copies kept. Sanity check only.
+    "mine_leaky": {"names": ["MILCO", "NOMBO"], "remap": {0: 0, 1: 1}},
 }
 
 
@@ -69,7 +74,8 @@ def collect_aquascan(raw):
             for img in sorted((root / "images").iterdir()) if img.suffix.lower() in {".png", ".jpg"}]
 
 
-COLLECT = {"cylinder2": collect_cylinder2, "mine": collect_mine, "aquascan": collect_aquascan}
+COLLECT = {"cylinder2": collect_cylinder2, "mine": collect_mine, "aquascan": collect_aquascan,
+           "mine_leaky": collect_mine}
 
 
 def near_dup_clusters(hashes):
@@ -168,6 +174,8 @@ def main():
             it["boxes"] = read_yolo(it["label"], cfg["remap"])
 
         clusters = near_dup_clusters([it["hash"] for it in items])
+        if dom == "mine_leaky":
+            clusters = list(range(len(items)))
         n_downscaled = 0
         if dom == "mine":
             # 416² images that match a 1024² image are downscaled copies of it: keep only the original.
@@ -182,25 +190,33 @@ def main():
         (dst / "images").mkdir(parents=True, exist_ok=True)
         (dst / "labels").mkdir(parents=True, exist_ok=True)
         for it in items:
-            link = dst / "images" / f"{it['id']}{it['src'].suffix.lower()}"
-            if not link.is_symlink():
-                os.symlink(it["src"], link)
+            # Sonar colour is a display palette over one intensity channel; store that channel only, so
+            # the model never sees palette differences between devices or software (lossless PNG).
+            out_img = dst / "images" / f"{it['id']}.png"
+            if not out_img.exists():
+                with Image.open(it["src"]) as im:
+                    rgb = np.asarray(im.convert("RGB"))
+                Image.fromarray(rgb.max(2)).save(out_img)
+                if dom == "aquascan":  # UI overlay text is only detectable in colour, so keep it as a mask
+                    (dst / "uimask").mkdir(exist_ok=True)
+                    Image.fromarray(ui_text_mask(rgb[..., ::-1]).astype(np.uint8) * 255).save(
+                        dst / "uimask" / f"{it['id']}.png")
             (dst / "labels" / f"{it['id']}.txt").write_text(
                 "".join(f"{c} {x:.6f} {y:.6f} {w:.6f} {h:.6f}\n" for c, x, y, w, h in it["boxes"]))
         with open(dst / "meta.csv", "w", newline="") as f:
             wr = csv.writer(f)
             wr.writerow(["id", "file", "split", "w", "h", "res", "group", "n_obj", "dup_cluster"])
             for it, c in zip(items, clusters):
-                wr.writerow([it["id"], f"{it['id']}{it['src'].suffix.lower()}", it["split"], it["w"], it["h"],
+                wr.writerow([it["id"], f"{it['id']}.png", it["split"], it["w"], it["h"],
                              it["res"], it["group"], len(it["boxes"]), c])
 
         split_dir = REPO / "data" / "splits" / dom
         split_dir.mkdir(parents=True, exist_ok=True)
         for s in ("train", "val", "test"):
-            ids = sorted(f"{it['id']}{it['src'].suffix.lower()}" for it in items if it["split"] == s)
+            ids = sorted(f"{it['id']}.png" for it in items if it["split"] == s)
             (split_dir / f"{s}.txt").write_text("\n".join(ids) + "\n")
         train = [it for it in items if it["split"] == "train"]
-        ext = {it["id"]: it["src"].suffix.lower() for it in items}
+        ext = {it["id"]: ".png" for it in items}
         for (seed, pct), ids in nested_subsets(train).items():
             (split_dir / f"train_s{seed}_p{pct}.txt").write_text("\n".join(i + ext[i] for i in ids) + "\n")
 

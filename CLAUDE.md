@@ -22,10 +22,17 @@ Settled with the user on 2026-11-12. These override the spec where they differ.
 - **Low-data subsets**: nested (10% ⊂ 25% ⊂ 50% ⊂ 100%). The subset changes with the seed. Every config uses the same subset for the same seed, so results are paired.
 - **Models**: YOLO11s and RT-DETR-l, both COCO-pretrained, Ultralytics.
 - **Image size**: `imgsz=1024` for every domain, using plain resampling and no super-resolution. Build synthetic images at native resolution.
-- **Synth**:
+- **Grayscale**: sonar colour is only a display palette, and AquaScan mixes several palettes. All images, real and synthetic, are single-channel intensity `max(R,G,B)` stored as PNG. Ultralytics replicates the channel to 3, so COCO weights still apply.
+- **Synth "ours"** (code in `synth/`):
   - The object bank comes only from that seed's train subset.
-  - Cut out the object highlight with a mask and drop the real shadow. Render a new shadow that points away from nadir and grows longer with range.
-  - Mine: paste objects only onto backgrounds of the same image-size group (416² with 416², 1024² with 1024²).
+  - Each object is an *acoustic signature*: highlight plus its real cast shadow, cut from a crop that extends past the box on the far-range side and stored with the shadow pointing right. The first design (highlight only plus a rendered shadow) failed on Cylinder2 and AquaScan, whose objects are mostly shadow.
+  - When pasting, the shadow is mirrored for the port side and stretched by the ratio `shadow_factor(r_target) / shadow_factor(r_source)`.
+  - The label box goes through the same transform, so the bbox convention of each domain carries over automatically.
+  - Placement uses the seafloor only, avoiding the water column, nadir, flat/no-data regions, and AquaScan's UI mask (`data/aquascan/uimask`).
+  - Blending matches the background level by intensity ratio and uses a feathered alpha. Speckle restores the variance lost to resizing, measured on the crop's own seabed pixels.
+  - Mine: paste objects only onto backgrounds of the same image-size group.
+  - Ablation components: `scale, placement, blending, speckle, shadow`, plus `featherblend`, which switches to Poisson blending. `make_synth.py --ablate X` writes to `synth/ours-noX`.
+- **naive**: the raw labelled box at its original size, pasted at a uniform random position with a hard paste.
 - **Go/no-go on 2026-11-20**: at 25% real, YOLO, 3 seeds, the mean mAP50-95 of ours must beat naive in at least 2 of 3 domains. If it does not, switch the target to IGARSS.
 
 ## Data facts (checked 2026-11-12)
@@ -37,7 +44,9 @@ Settled with the user on 2026-11-12. These override the spec where they differ.
 - **Mine 416² near-duplicates**: 416 of the 584 images at 416² are downscaled copies of 1024² images (pHash distance ≤ 6, identical labels). `prepare_data.py` drops these copies (user decision), so Mine has 754 images: 531 train, 113 val, 110 test.
 - **Training budget**: 100 virtual epochs × 512 images (3,200 steps), which is the default in `train.py`. In a 200-epoch run, val mAP had mostly plateaued by about epoch 100–150.
 - **AquaScan**: one source PNG is truncated (`9bf66ea1-Screenshot_2025-08-03_15.08.49.png`); `prepare_data.py` skips it and logs it in `report.json`.
-- **Prepared data**: `/scratch/lt200304-dipmt/paweekorn/data/<domain>/{images,labels,meta.csv}`, built by `scripts/prepare_data.py`. The images are symlinks to the raw data.
+- **Prepared data**: `/scratch/lt200304-dipmt/paweekorn/data/<domain>/{images,labels,meta.csv}` holds grayscale PNGs built by `scripts/prepare_data.py`. Synthetic sets are in `.../data/<domain>/synth/<method>/s{seed}_p{pct}/`, built by `scripts/make_synth.py` on a CPU node via `scripts/slurm/cpu.sh`. `data_color_old/` and `results/_color_archive/` hold the superseded colour runs.
+- **Gap to JMSE 2026** (YOLO11n on Mine, mAP50-95 .648 vs our ~.25): leakage from duplicates does *not* explain it (leaky split .255 vs clean .245). The next hypothesis is that they used positive-only images; this is not tested yet.
+- **Workflow tools**: `scripts/summarize.py` prints mean ± std and paired t-tests by seed. `notebooks/preview_synth.py` renders local naive-vs-ours contact sheets from `local_samples/`, which is gitignored.
 
 ## LANTA (NSTDA supercomputer)
 
@@ -55,8 +64,11 @@ Settled with the user on 2026-11-12. These override the spec where they differ.
   - Code checkout: `/project/lt200304-dipmt/paweekorn/sss-project`
   - Large outputs (synthetic images, runs): `/scratch/lt200304-dipmt/paweekorn/` (do not put them in `/project` or git)
   - Legacy: `/project/lt200304-dipmt/paweekorn/sss_project` is the old project. Leave it alone.
-- Code sync: commit, push to GitHub (`origin`), then `git pull` on LANTA. LANTA can reach github.com. The local machine has no rsync.
-- Run many seeds or configs as a Slurm job array. Each array task writes `results/<run_id>.json`.
+- Code sync: the LANTA checkout is a git clone of branch `remake`. Uncommitted local work is copied over with `tar cf - <paths> | ssh transfer_lanta 'cd <checkout> && tar xf -'`, because commits wait for the user. The local machine has no rsync.
+- Local Python: use `.venv` (gitignored) and set `PYTHONIOENCODING=utf-8`. The console codepage is cp874, and non-ASCII output crashes without it.
+- **Cluster etiquette: at most 4 GPUs/jobs running at once** (user request; LANTA is shared). Submit only through `bash scripts/slurm/submit.sh <jobs.txt> [PACK] [sbatch args]`. It adds an array throttle `%4` and `--dependency=singleton`, and it runs PACK (default 3) training lines concurrently on each GPU. Never call `sbatch` on `array.sh` directly.
+- **GPU budget: 100 GPU-hours total** for the whole remake. Check usage with `bash scripts/slurm/gpu_hours.sh` before and after each batch, and report it to the user.
+- Each training line writes `results/<run_id>.json`.
 
 ## Git
 

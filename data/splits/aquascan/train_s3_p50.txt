@@ -76,7 +76,7 @@
 33c0eb89-Screenshot_2025-08-03_14.56.39.png
 33c7bea0-2025-11-23_17_38_43-rtsp___192.168.2.124_554_screenmirror_-_VLC_Plus_Player.png
 33e3f6b2-Screenshot_2025-07-01_20.33.51.png
-3421312c-Vagen_2017-05-08_3.jpg
+3421312c-Vagen_2017-05-08_3.png
 34d76830-2025-11-23_17_59_52-rtsp___192.168.2.124_554_screenmirror_-_VLC_Plus_Player.png
 35e9ac11-Screenshot_2025-08-03_13.33.36.png
 35f4cd42-Screenshot_2025-08-10_23.05.26.png
@@ -260,7 +260,7 @@ b24a4582-3377112912_07SEP25_1331_00.png
 b2f9be4b-2025-11-23_16_28_20-rtsp___192.168.2.124_554_screenmirror_-_VLC_Plus_Player.png
 b32a0af9-Screenshot_2025-06-09_20.02.45.png
 b3518482-2025-11-23_17_52_08-rtsp___192.168.2.124_554_screenmirror_-_VLC_Plus_Player.png
-b36c391b-Vagen_2017-05-08_1.jpg
+b36c391b-Vagen_2017-05-08_1.png
 b42ec741-3377112912_13SEP25_1434_00.png
 b4e96ede-Screenshot_2025-08-03_14.42.20.png
 b507064c-Screenshot_2025-08-17_22.20.45.png

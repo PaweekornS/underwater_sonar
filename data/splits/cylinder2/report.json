@@ -5,6 +5,7 @@
   ],
   "hash_dist": 6,
   "corrupt_skipped": [],
+  "downscaled_copies_removed": 0,
   "n_images": 478,
   "dup_clusters_gt1": 0,
   "images_in_dup_clusters": 0,

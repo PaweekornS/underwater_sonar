@@ -20,8 +20,8 @@ REPO = Path(__file__).resolve().parents[1]
 DATA = Path("/scratch/lt200304-dipmt/paweekorn/data")
 RUNS = Path("/scratch/lt200304-dipmt/paweekorn/runs")
 WEIGHTS = Path("/scratch/lt200304-dipmt/paweekorn/weights")
-MODELS = {"yolo": "yolo11s.pt", "rtdetr": "rtdetr-l.pt"}
-NAMES = {"cylinder2": ["cylinder", "manta"], "mine": ["MILCO", "NOMBO"], "aquascan": ["human"]}
+MODELS = {"yolo": "yolo11s.pt", "yolon": "yolo11n.pt", "rtdetr": "rtdetr-l.pt"}
+NAMES = {"cylinder2": ["cylinder", "manta"], "mine": ["MILCO", "NOMBO"], "mine_leaky": ["MILCO", "NOMBO"], "aquascan": ["human"]}
 
 AUG_OFF = dict(hsv_h=0, hsv_s=0, hsv_v=0, degrees=0, translate=0, scale=0, shear=0, perspective=0,
                flipud=0, fliplr=0, mosaic=0, mixup=0, cutmix=0, copy_paste=0, erasing=0)
@@ -29,6 +29,26 @@ AUG_OFF = dict(hsv_h=0, hsv_s=0, hsv_v=0, degrees=0, translate=0, scale=0, shear
 
 def read_list(path):
     return [line for line in Path(path).read_text().splitlines() if line]
+
+
+def link_split(files, dst):
+    """Symlink images and their labels into a per-run folder. Ultralytics writes labels.cache next to the
+    label folder, so runs sharing the data folder would race on one cache file when packed on a GPU."""
+    (dst / "images").mkdir(parents=True, exist_ok=True)
+    (dst / "labels").mkdir(parents=True, exist_ok=True)
+    links = {}
+    for f in files:
+        if f in links:
+            continue
+        src = Path(f)
+        name = f"{len(links):06d}_{src.name}"
+        img = dst / "images" / name
+        lab = dst / "labels" / f"{Path(name).stem}.txt"
+        for link, target in ((img, src), (lab, src.parent.parent / "labels" / f"{src.stem}.txt")):
+            if not link.is_symlink():
+                link.symlink_to(target)
+        links[f] = str(img)
+    return [links[f] for f in files]
 
 
 def train_images(domain, real, seed):
@@ -71,6 +91,9 @@ def main():
     synth_name = args.synth + (f"-no{args.ablate}" if args.ablate else "")
     run_id = (f"{args.domain}_r{round(args.real * 100)}_{synth_name}"
               f"{'' if args.synth == 'none' else f'x{args.ratio:g}'}_aug{args.aug}_{args.model}_s{args.seed}")
+    if (REPO / "results" / f"{run_id}.json").exists():
+        print(f"{run_id}: result exists, skipping")
+        return
     run_dir = RUNS / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -84,10 +107,12 @@ def main():
     epoch_list = epoch_list[:args.epoch_images]
 
     split_dir = REPO / "data" / "splits" / args.domain
-    (run_dir / "train.txt").write_text("\n".join(epoch_list) + "\n")
-    for s in ("val", "test"):
-        (run_dir / f"{s}.txt").write_text(
-            "\n".join(str(DATA / args.domain / "images" / f) for f in read_list(split_dir / f"{s}.txt")) + "\n")
+    split_files = {
+        "train": epoch_list,
+        **{s: [str(DATA / args.domain / "images" / f) for f in read_list(split_dir / f"{s}.txt")]
+           for s in ("val", "test")}}
+    for s, files in split_files.items():
+        (run_dir / f"{s}.txt").write_text("\n".join(link_split(files, run_dir / "data" / s)) + "\n")
     data_yaml = run_dir / "data.yaml"
     data_yaml.write_text(yaml.safe_dump({
         "path": str(run_dir), "train": "train.txt", "val": "val.txt", "test": "test.txt",
