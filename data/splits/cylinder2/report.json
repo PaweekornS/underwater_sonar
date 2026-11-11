@@ -1,0 +1,69 @@
+{
+  "names": [
+    "cylinder",
+    "manta"
+  ],
+  "hash_dist": 6,
+  "corrupt_skipped": [],
+  "n_images": 478,
+  "dup_clusters_gt1": 0,
+  "images_in_dup_clusters": 0,
+  "train_dropped_as_leak": 0,
+  "splits": {
+    "train": {
+      "images": 330,
+      "empty": 0,
+      "boxes": {
+        "manta": 95,
+        "cylinder": 235
+      }
+    },
+    "val": {
+      "images": 99,
+      "empty": 0,
+      "boxes": {
+        "manta": 29,
+        "cylinder": 70
+      }
+    },
+    "test": {
+      "images": 49,
+      "empty": 0,
+      "boxes": {
+        "manta": 15,
+        "cylinder": 34
+      }
+    },
+    "dropped": {
+      "images": 0,
+      "empty": 0,
+      "boxes": {}
+    }
+  },
+  "groups_per_split": {
+    "train": {
+      "2021_09_28_exp1": 38,
+      "2021_09_29_exp1": 64,
+      "2021_09_30_exp1": 62,
+      "2021_11_16_exp2": 55,
+      "2021_11_18_exp2": 54,
+      "2021_11_19_exp2": 57
+    },
+    "val": {
+      "2021_09_28_exp1": 9,
+      "2021_09_29_exp1": 22,
+      "2021_09_30_exp1": 14,
+      "2021_11_16_exp2": 16,
+      "2021_11_18_exp2": 18,
+      "2021_11_19_exp2": 20
+    },
+    "test": {
+      "2021_09_28_exp1": 3,
+      "2021_09_29_exp1": 13,
+      "2021_09_30_exp1": 7,
+      "2021_11_16_exp2": 7,
+      "2021_11_18_exp2": 8,
+      "2021_11_19_exp2": 11
+    }
+  }
+}

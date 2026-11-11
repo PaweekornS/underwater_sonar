@@ -1,0 +1,7 @@
+
+# remake outputs
+runs/
+*.pt
+*.weights
+synthetic/outputs/
+/data/synth/
