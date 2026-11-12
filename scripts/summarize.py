@@ -18,7 +18,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--real", type=float)
     ap.add_argument("--model")
-    ap.add_argument("--metric", default="map50_95")
+    ap.add_argument("--metric", default="map50")
     args = ap.parse_args()
 
     runs = [json.loads(p.read_text()) for p in (REPO / "results").glob("*.json")]
@@ -26,7 +26,8 @@ def main():
             and (args.model is None or r["model"] == args.model)]
     cells = defaultdict(dict)  # (domain, real, model) -> config -> {seed: value}
     for r in runs:
-        cfg = r["synth_dir"] + (f"x{r['ratio']:g}" if r["synth"] != "none" else "") + f"/aug{r['aug']}"
+        cfg = (r["synth_dir"] + (f"x{r['ratio']:g}" if r["synth"] != "none" else "")
+               + ("/ONLY" if r.get("synth_only") else "") + f"/aug{r['aug']}")
         cells[(r["domain"], r["real"], r["model"])].setdefault(cfg, {})[r["seed"]] = r["test"][args.metric]
 
     for key in sorted(cells):

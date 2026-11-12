@@ -79,6 +79,8 @@ def main():
     ap.add_argument("--model", default="yolo", choices=list(MODELS))
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--ablate", default="", help="synth component left out, e.g. shadow (selects synth dir)")
+    ap.add_argument("--synth-only", action="store_true",
+                    help="diagnostic: train on the synthetic images alone (val/test stay real)")
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--epoch-images", type=int, default=512)
     ap.add_argument("--batch", type=int, default=16)
@@ -90,7 +92,8 @@ def main():
         raise SystemExit("synthetic configs are stacked on standard augmentation (aug=on)")
     synth_name = args.synth + (f"-no{args.ablate}" if args.ablate else "")
     run_id = (f"{args.domain}_r{round(args.real * 100)}_{synth_name}"
-              f"{'' if args.synth == 'none' else f'x{args.ratio:g}'}_aug{args.aug}_{args.model}_s{args.seed}")
+              f"{'' if args.synth == 'none' else f'x{args.ratio:g}'}{'_synthonly' if args.synth_only else ''}"
+              f"_aug{args.aug}_{args.model}_s{args.seed}")
     if (REPO / "results" / f"{run_id}.json").exists():
         print(f"{run_id}: result exists, skipping")
         return
@@ -99,7 +102,9 @@ def main():
 
     real = train_images(args.domain, args.real, args.seed)
     synth = synth_images(args.domain, synth_name, args.real, args.seed, args.ratio, len(real))
-    pool = real + synth
+    if args.synth_only and not synth:
+        raise SystemExit("--synth-only needs --synth naive|ours")
+    pool = synth if args.synth_only else real + synth
     rng = random.Random(args.seed)
     epoch_list = []
     while len(epoch_list) < args.epoch_images:

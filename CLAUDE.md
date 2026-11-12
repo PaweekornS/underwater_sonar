@@ -20,7 +20,11 @@ Settled with the user on 2026-11-12. These override the spec where they differ.
   3. config 2 + naive copy-paste
   4. config 2 + ours
 - **Low-data subsets**: nested (10% ⊂ 25% ⊂ 50% ⊂ 100%). The subset changes with the seed. Every config uses the same subset for the same seed, so results are paired.
-- **Models**: YOLO11s and RT-DETR-l, both COCO-pretrained, Ultralytics.
+- **Models**: YOLO11s and RT-DETR-l, both COCO-pretrained, Ultralytics. **Update 2026-11-13**: the user decided to switch the main detector to **YOLO11n** (`--model yolon`), matching JMSE 2026, once a 9-run baseline check at 25% confirms that n is not much worse than s.
+- **Primary metric: mAP50** (user decision, 2026-11-13). Always report mAP50-95 alongside it.
+  - Rationale for the paper: SSS box extents are ambiguous (whether and how much shadow is included) and differ by dataset, and objects are 15–30 px, so mAP50-95 mostly measures agreement with the annotator's box tightness.
+  - The switch was made after the go/no-go and did not change its outcome, which still fails under mAP50. Say this openly in the paper.
+  - `scripts/summarize.py` defaults to `map50`.
 - **Image size**: `imgsz=1024` for every domain, using plain resampling and no super-resolution. Build synthetic images at native resolution.
 - **Grayscale**: sonar colour is only a display palette, and AquaScan mixes several palettes. All images, real and synthetic, are single-channel intensity `max(R,G,B)` stored as PNG. Ultralytics replicates the channel to 3, so COCO weights still apply.
 - **Synth "ours"** (code in `synth/`):
@@ -34,6 +38,12 @@ Settled with the user on 2026-11-12. These override the spec where they differ.
   - Ablation components: `scale, placement, blending, speckle, shadow`, plus `featherblend`, which switches to Poisson blending. `make_synth.py --ablate X` writes to `synth/ours-noX`.
 - **naive**: the raw labelled box at its original size, pasted at a uniform random position with a hard paste.
 - **Go/no-go on 2026-11-20**: at 25% real, YOLO, 3 seeds, the mean mAP50-95 of ours must beat naive in at least 2 of 3 domains. If it does not, switch the target to IGARSS.
+- **Result (run 2026-11-12/13): FAILED.** Ours beat naive in 1 of 3 domains (Mine +.003, which is noise), and lost on AquaScan (−.030, p=.007). With the user's agreement, the **target is now IGARSS 2027 (deadline 10 Jan 2027)**. The work is now diagnosing why.
+  - Ruled out: distorted label boxes. Box aspect ratio and size match real data in every domain.
+  - Measured: ours is *closer* to real in-box statistics than naive. Naive has higher contrast and visible box edges, yet it helps more. Working hypothesis: naive acts as a stronger augmentation, and realism alone does not help the detector.
+  - User concern: the synthetic shadow may teach YOLO to detect the shadow instead of the object.
+  - Diagnostics queued: `ours-noshadow`, `ours-noplacement`, and synth-only training (`train.py --synth-only`) for naive and ours.
+  - **The user allows a full redesign of the synth method** (2026-11-13), including dropping the current logic or moving to GAN/diffusion, if it makes the paper work. Before proposing generative models, weigh the data size (only 83–190 objects at 25% real), the 100 GPU-hour budget, and whether the comparison stays fair.
 
 ## Data facts (checked 2026-11-12)
 
