@@ -2,7 +2,7 @@
 
 Paper remake: physics-aware synthetic side-scan sonar (SSS) data for small-object detection.
 The spec is [remake_requirements.md](remake_requirements.md). Read it before any design work.
-Work on branch `remake`. Code from before the remake (`detection/`, `classification/`, `synthetic/`, `data/`) is legacy: reuse its logic, do not extend it.
+Work on branch `remake`. Code from before the remake (old `detection/`, `classification/`, `synthetic/`, `data/`, notebooks) was deleted from this branch on 2026-11-25; it remains on `main` if its logic is ever needed. `synth/` is the current synthetic-data code.
 
 Reply to the user in Thai. Keep code, comments, commit messages, and the paper in English.
 
@@ -43,6 +43,9 @@ Settled with the user on 2026-11-12. These override the spec where they differ.
   - Measured: ours is *closer* to real in-box statistics than naive. Naive has higher contrast and visible box edges, yet it helps more. Working hypothesis: naive acts as a stronger augmentation, and realism alone does not help the detector.
   - User concern: the synthetic shadow may teach YOLO to detect the shadow instead of the object.
   - Diagnostics queued: `ours-noshadow`, `ours-noplacement`, and synth-only training (`train.py --synth-only`) for naive and ours.
+  - **Diagnosis result (2026-11-25)**: neither shadow, placement, scale, speckle, nor blending is the cause. Images with ours-pasted objects alone score *below* plain real images (AquaScan mAP50 .502 vs .609), and precision drops (.63 vs .73). The culprit is the core *signature cut by threshold mask*: it yields incomplete blobs without context, which teaches false positives. Naive pastes the whole box and does no harm.
+  - **YOLO11n beats YOLO11s at 25% real** in every domain (mAP50: AquaScan .644/.609, Cylinder2 .408/.193, Mine .271/.216). Switched to 11n. All synth comparisons must be redone on 11n.
+  - **New direction: forward selection from naive.** `box-<steps>` in `synth/compose.py` pastes the whole box and adds physics steps one at a time: `sea` (seafloor-only placement), `mirror` (shadow away from nadir), `range` (paste near the source ground range), `blend` (feathered box edge plus level ratio). Each step is kept only if it helps.
   - **The user allows a full redesign of the synth method** (2026-11-13), including dropping the current logic or moving to GAN/diffusion, if it makes the paper work. Before proposing generative models, weigh the data size (only 83–190 objects at 25% real), the 100 GPU-hour budget, and whether the comparison stays fair.
 
 ## Data facts (checked 2026-11-12)
@@ -77,7 +80,7 @@ Settled with the user on 2026-11-12. These override the spec where they differ.
 - Code sync: the LANTA checkout is a git clone of branch `remake`. Uncommitted local work is copied over with `tar cf - <paths> | ssh transfer_lanta 'cd <checkout> && tar xf -'`, because commits wait for the user. The local machine has no rsync.
 - Local Python: use `.venv` (gitignored) and set `PYTHONIOENCODING=utf-8`. The console codepage is cp874, and non-ASCII output crashes without it.
 - **Cluster etiquette: at most 4 GPUs/jobs running at once** (user request; LANTA is shared). Submit only through `bash scripts/slurm/submit.sh <jobs.txt> [PACK] [sbatch args]`. It adds an array throttle `%4` and `--dependency=singleton`, and it runs PACK (default 3) training lines concurrently on each GPU. Never call `sbatch` on `array.sh` directly.
-- **GPU budget: 100 GPU-hours total** for the whole remake. Check usage with `bash scripts/slurm/gpu_hours.sh` before and after each batch, and report it to the user.
+- **Budget: 1000 LANTA SHr** (raised by the user on 2026-11-25, replacing the earlier 100 GPU-hour cap). Measured rate: 1 GPU-hour ≈ 6 SHr, so the budget is about 160 GPU-hours. `bash scripts/slurm/gpu_hours.sh` prints both units; run it before and after each batch and report it to the user. The SHr figure is project-wide, so other members of `lt200304` count towards it too.
 - Each training line writes `results/<run_id>.json`.
 
 ## Git
