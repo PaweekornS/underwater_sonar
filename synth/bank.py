@@ -24,6 +24,7 @@ class BankObject:
     range_norm: float       # normalised ground range of the source position
     raw_box: np.ndarray     # uint8 labelled box as in the source image (naive copy-paste)
     ring_mean: float        # mean seabed level around the source object
+    side: int               # -1 port, +1 starboard in the source image (raw_box orientation)
     res: str                # image-size group, e.g. "1024x1024"
     usable: bool            # has a detectable signature
 
@@ -99,6 +100,6 @@ def extract(image_path, label_path, ui_mask=None):
         out.append(BankObject(
             cls=c, patch=np.ascontiguousarray(crop), bright=feather(bright), dark=feather(dark), box=box,
             stretch_from=stretch_from, range_norm=swath.range_norm((x0 + x1) // 2, (y0 + y1) // 2),
-            raw_box=gray[y0:y1, x0:x1].copy(), ring_mean=rm, res=f"{w}x{h}",
+            raw_box=gray[y0:y1, x0:x1].copy(), ring_mean=rm, side=side, res=f"{w}x{h}",
             usable=bright.sum() + dark.sum() >= 6))
     return out

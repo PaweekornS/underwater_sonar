@@ -41,7 +41,7 @@ for dom, has_ui in CFG.items():
         objs = rng.sample(pool, min(4, len(pool)))
         existing = read_boxes(lab, w, h)
         rows = []
-        for method in ("naive", "ours"):
+        for method in ("naive", "box-sea-mirror-range-blend"):
             img, labels = compose(gray, existing, objs, method, random.Random(k),
                                   Options(), scale_pool, ui)
             new = labels[len(existing):]
@@ -57,7 +57,7 @@ for dom, has_ui in CFG.items():
                                           cv2.COLOR_GRAY2BGR))
             crops += [np.zeros((200, 200, 3), np.uint8)] * (3 - len(crops))
             tile = np.hstack([cv2.resize(full, (300, 200)), *crops])
-            cv2.putText(tile, method, (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            cv2.putText(tile, method[:12], (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
             rows.append(tile)
         tiles.append(np.vstack(rows))
     cv2.imwrite(str(out / f"{dom}.jpg"), np.vstack(tiles), [cv2.IMWRITE_JPEG_QUALITY, 90])

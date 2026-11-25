@@ -73,7 +73,8 @@ def main():
     ap.add_argument("--domain", required=True)
     ap.add_argument("--seed", type=int, required=True)
     ap.add_argument("--real", type=float, required=True, choices=[0.1, 0.25, 0.5, 1.0])
-    ap.add_argument("--method", required=True, choices=["naive", "ours"])
+    ap.add_argument("--method", required=True,
+                    help='naive | ours | box-<steps> with steps from synth.compose.BOX_STEPS, e.g. box-sea-mirror')
     ap.add_argument("--ablate", default="", choices=["", *COMPONENTS, "featherblend"],
                     help="leave one component out; 'featherblend' = Poisson blending instead of feathering")
     ap.add_argument("--count-ratio", type=float, default=1.0, help="synthetic images per real train image")

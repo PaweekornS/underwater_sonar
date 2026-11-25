@@ -36,21 +36,6 @@ def _mark(occupied, x0, y0, x1, y1, pad=4):
     occupied[max(0, y0 - pad):y1 + pad, max(0, x0 - pad):x1 + pad] = True
 
 
-def paste_naive(img, objects, occupied, rng):
-    h, w = img.shape
-    labels = []
-    for obj in objects:
-        bh, bw = obj.raw_box.shape
-        for _ in range(50):
-            x, y = rng.randint(0, w - bw), rng.randint(0, h - bh)
-            if _free(occupied, x, y, x + bw, y + bh):
-                img[y:y + bh, x:x + bw] = obj.raw_box
-                _mark(occupied, x, y, x + bw, y + bh)
-                labels.append((obj.cls, x, y, x + bw, y + bh))
-                break
-    return labels
-
-
 def speckle(patch, alpha, target_cv, rng_np):
     """Multiplicative Gamma speckle restoring the texture that resizing smoothed away. The loss is measured
     on the seabed pixels of the crop (outside the signature), which went through the same resize, and
@@ -163,15 +148,77 @@ def paste_ours(level, objects, occupied, rng, opt, scale_pool, ui_mask=None):
     return labels
 
 
+BOX_STEPS = ("sea", "mirror", "range", "blend")
+
+
+def paste_box(level, objects, occupied, rng, steps, ui_mask=None):
+    """Naive copy-paste of the whole labelled box, plus the physics steps in `steps`:
+    sea    - the box lies fully on seafloor (no water column, nadir, no-data, UI)
+    mirror - flip the box when pasting on the other side, so its shadow points away from nadir
+    range  - paste at a ground range close to the source's, so shadow length stays consistent
+    blend  - feathered box edge, and the box's level scaled to the local seabed level
+    The whole box is kept, so the object stays complete with its local context."""
+    h, w = level.shape
+    swath = analyze(level, ui_mask) if steps & {"sea", "mirror", "range"} else None
+    labels = []
+    for obj in objects:
+        box = obj.raw_box.astype(np.float32)
+        bh, bw = box.shape
+        if bh >= h or bw >= w:
+            continue
+        placed = None
+        for attempt in range(200):
+            if "sea" in steps:
+                ys, xs = np.nonzero(swath.seafloor[: h - bh, : w - bw])
+                if len(xs) == 0:
+                    break
+                i = rng.randrange(len(xs))
+                x, y = int(xs[i]), int(ys[i])
+                if not swath.seafloor[y:y + bh, x:x + bw].all():
+                    continue
+            else:
+                x, y = rng.randint(0, w - bw), rng.randint(0, h - bh)
+            # relax the range constraint after many failed tries rather than drop the object
+            if "range" in steps and attempt < 150:
+                if abs(swath.range_norm(x + bw // 2, y + bh // 2) - obj.range_norm) > 0.15:
+                    continue
+            if _free(occupied, x, y, x + bw, y + bh):
+                placed = (x, y)
+                break
+        if placed is None:
+            continue
+        x, y = placed
+        if "mirror" in steps and swath.side(x + bw / 2) != obj.side:
+            box = box[:, ::-1]
+        roi = level[y:y + bh, x:x + bw]
+        if "blend" in steps:
+            local = level[max(0, y - bh):y + 2 * bh, max(0, x - bw):x + 2 * bw]
+            box = np.clip(box * (local.mean() / max(obj.ring_mean, 1.0)), 0, 255)
+            ramp = max(2, min(bh, bw) // 5)
+            ay = np.minimum(np.arange(bh), np.arange(bh)[::-1]) / ramp
+            ax = np.minimum(np.arange(bw), np.arange(bw)[::-1]) / ramp
+            alpha = np.clip(np.minimum(ay[:, None], ax[None, :]), 0, 1)
+            level[y:y + bh, x:x + bw] = alpha * box + (1 - alpha) * roi
+        else:
+            level[y:y + bh, x:x + bw] = box
+        _mark(occupied, x, y, x + bw, y + bh)
+        labels.append((obj.cls, x, y, x + bw, y + bh))
+    return labels
+
+
 def compose(gray, existing_boxes, objects, method, rng, opt=None, scale_pool=None, ui_mask=None):
-    """gray: uint8 HxW. Returns (image, labels). Existing labelled objects are kept and never overlapped."""
+    """gray: uint8 HxW. Returns (image, labels). Existing labelled objects are kept and never overlapped.
+    method: "naive", "ours" (signature cut), or "box-<step>-<step>..." (naive plus physics steps)."""
     h, w = gray.shape
     occupied = np.zeros((h, w), bool)
     for _, x0, y0, x1, y1 in existing_boxes:
         _mark(occupied, x0, y0, x1, y1, pad=8)
-    if method == "naive":
-        img = gray.copy()
-        return img, list(existing_boxes) + paste_naive(img, objects, occupied, rng)
     level = gray.astype(np.float32)
-    new = paste_ours(level, [o for o in objects if o.usable], occupied, rng, opt or Options(), scale_pool, ui_mask)
+    if method == "naive" or method.startswith("box"):
+        steps = set(method.split("-")[1:]) if method.startswith("box") else set()
+        assert steps <= set(BOX_STEPS), f"unknown box step in {method}"
+        new = paste_box(level, objects, occupied, rng, steps, ui_mask)
+    else:
+        new = paste_ours(level, [o for o in objects if o.usable], occupied, rng, opt or Options(), scale_pool,
+                         ui_mask)
     return np.clip(np.round(level), 0, 255).astype(np.uint8), list(existing_boxes) + new

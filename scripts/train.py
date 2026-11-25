@@ -73,7 +73,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--domain", choices=list(NAMES), required=True)
     ap.add_argument("--real", type=float, default=1.0, choices=[0.1, 0.25, 0.5, 1.0])
-    ap.add_argument("--synth", default="none", choices=["none", "naive", "ours"])
+    ap.add_argument("--synth", default="none", help="none | naive | ours | box-<steps> (synth folder name)")
     ap.add_argument("--ratio", type=float, default=1.0)
     ap.add_argument("--aug", default="on", choices=["on", "off"])
     ap.add_argument("--model", default="yolo", choices=list(MODELS))
