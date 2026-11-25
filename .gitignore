@@ -7,3 +7,10 @@ synthetic/outputs/
 /data/synth/
 /local_samples/
 /.venv/
+
+# local tool / plugin state
+.claude/
+graphify-out/
+.understand-anything/
+.gstack/
+*.local.json
