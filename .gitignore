@@ -28,3 +28,6 @@ __pycache__/
 Thumbs.db
 # training outputs
 results/
+
+# paper drafts (kept local)
+/paper/
