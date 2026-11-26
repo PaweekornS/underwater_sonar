@@ -81,6 +81,9 @@ def main():
     ap.add_argument("--ablate", default="", help="synth component left out, e.g. shadow (selects synth dir)")
     ap.add_argument("--synth-only", action="store_true",
                     help="diagnostic: train on the synthetic images alone (val/test stay real)")
+    ap.add_argument("--schedule", default="mix", choices=["mix", "pretrain"],
+                    help="mix: real+synth together; pretrain: first half of the steps on synth only, "
+                         "second half fine-tuning on real only (same total steps)")
     ap.add_argument("--epochs", type=int, default=100)
     ap.add_argument("--epoch-images", type=int, default=512)
     ap.add_argument("--batch", type=int, default=16)
@@ -93,6 +96,7 @@ def main():
     synth_name = args.synth + (f"-no{args.ablate}" if args.ablate else "")
     run_id = (f"{args.domain}_r{round(args.real * 100)}_{synth_name}"
               f"{'' if args.synth == 'none' else f'x{args.ratio:g}'}{'_synthonly' if args.synth_only else ''}"
+              f"{'_pre' if args.schedule == 'pretrain' else ''}"
               f"_aug{args.aug}_{args.model}_s{args.seed}")
     if (REPO / "results" / f"{run_id}.json").exists():
         print(f"{run_id}: result exists, skipping")
@@ -102,37 +106,46 @@ def main():
 
     real = train_images(args.domain, args.real, args.seed)
     synth = synth_images(args.domain, synth_name, args.real, args.seed, args.ratio, len(real))
-    if args.synth_only and not synth:
-        raise SystemExit("--synth-only needs --synth naive|ours")
-    pool = synth if args.synth_only else real + synth
-    rng = random.Random(args.seed)
-    epoch_list = []
-    while len(epoch_list) < args.epoch_images:
-        epoch_list += rng.sample(pool, len(pool))
-    epoch_list = epoch_list[:args.epoch_images]
-
+    if (args.synth_only or args.schedule == "pretrain") and not synth:
+        raise SystemExit("--synth-only / --schedule pretrain need a synth method")
     split_dir = REPO / "data" / "splits" / args.domain
-    split_files = {
-        "train": epoch_list,
-        **{s: [str(DATA / args.domain / "images" / f) for f in read_list(split_dir / f"{s}.txt")]
-           for s in ("val", "test")}}
-    for s, files in split_files.items():
+    eval_files = {s: [str(DATA / args.domain / "images" / f) for f in read_list(split_dir / f"{s}.txt")]
+                  for s in ("val", "test")}
+    for s, files in eval_files.items():
         (run_dir / f"{s}.txt").write_text("\n".join(link_split(files, run_dir / "data" / s)) + "\n")
-    data_yaml = run_dir / "data.yaml"
-    data_yaml.write_text(yaml.safe_dump({
-        "path": str(run_dir), "train": "train.txt", "val": "val.txt", "test": "test.txt",
-        "names": dict(enumerate(NAMES[args.domain]))}))
+
+    def stage_data(tag, pool):
+        """Write a fixed-size virtual epoch drawn from `pool` and a data.yaml that uses it (val/test real)."""
+        rng = random.Random(args.seed)
+        epoch_list = []
+        while len(epoch_list) < args.epoch_images:
+            epoch_list += rng.sample(pool, len(pool))
+        files = link_split(epoch_list[:args.epoch_images], run_dir / "data" / tag)
+        (run_dir / f"{tag}.txt").write_text("\n".join(files) + "\n")
+        y = run_dir / f"data_{tag}.yaml"
+        y.write_text(yaml.safe_dump({"path": str(run_dir), "train": f"{tag}.txt", "val": "val.txt", "test": "test.txt",
+                                     "names": dict(enumerate(NAMES[args.domain]))}))
+        return y
+
+    if args.schedule == "pretrain":
+        stages = [("pre", synth, args.epochs // 2), ("train", real, args.epochs - args.epochs // 2)]
+    else:
+        stages = [("train", synth if args.synth_only else real + synth, args.epochs)]
 
     from ultralytics import RTDETR, YOLO
-    model = (RTDETR if args.model == "rtdetr" else YOLO)(str(WEIGHTS / MODELS[args.model]))
+    Model = RTDETR if args.model == "rtdetr" else YOLO
+    weights = str(WEIGHTS / MODELS[args.model])
     aug = AUG_OFF if args.aug == "off" else {}
     t0 = time.time()
-    model.train(data=str(data_yaml), epochs=args.epochs, batch=args.batch, imgsz=args.imgsz, seed=args.seed,
-                deterministic=True, workers=args.workers, project=str(run_dir), name="train", exist_ok=True,
-                patience=args.epochs, close_mosaic=max(1, math.ceil(args.epochs / 10)), plots=False,
-                cache="ram", verbose=False, **aug)
-    best = run_dir / "train" / "weights" / "best.pt"
-    test = (RTDETR if args.model == "rtdetr" else YOLO)(str(best)).val(
+    for tag, pool, epochs in stages:
+        data_yaml = stage_data(tag, pool)
+        Model(weights).train(data=str(data_yaml), epochs=epochs, batch=args.batch, imgsz=args.imgsz, seed=args.seed,
+                             deterministic=True, workers=args.workers, project=str(run_dir), name=tag, exist_ok=True,
+                             patience=epochs, close_mosaic=max(1, math.ceil(epochs / 10)), plots=False,
+                             cache="ram", verbose=False, **aug)
+        weights = str(run_dir / tag / "weights" / "last.pt")  # the next stage starts from this one
+    best = run_dir / "train" / "weights" / "best.pt"  # selected on real val, final stage only
+    test = Model(str(best)).val(
         data=str(data_yaml), split="test", imgsz=args.imgsz, batch=args.batch, project=str(run_dir),
         name="test", exist_ok=True, plots=False, verbose=False)
 
