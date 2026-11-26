@@ -1,4 +1,6 @@
-"""LoRA fine-tuning of Stable Diffusion 1.5 inpainting on one domain's real train subset (box-conditioned).
+"""LoRA fine-tuning of Stable Diffusion 1.5 inpainting (box-conditioned). By default one model for all
+domains (--domain all), trained on every domain's full train split and conditioned on (domain, class)
+through the prompt (user decision 2026-11-26: one generator per type).
 
 Each object in the subset gives one example: its context window, a mask over the box plus its far-range
 shadow side, and a class prompt. The model learns to redraw a masked object consistent with the
@@ -32,6 +34,12 @@ os.environ.setdefault("HF_HOME", str(SCRATCH / "hf"))
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 BASE = "stable-diffusion-v1-5/stable-diffusion-inpainting"
 NAMES = {"cylinder2": ["cylinder", "manta"], "mine": ["MILCO", "NOMBO"], "aquascan": ["human"]}
+# Global class index over all domains: the conditioning of the pooled generators.
+CLASSES = [(d, n) for d in NAMES for n in NAMES[d]]
+
+
+def global_class(domain, c):
+    return CLASSES.index((domain, NAMES[domain][c]))
 
 
 def ui_mask(domain, image):
@@ -42,7 +50,7 @@ def ui_mask(domain, image):
 
 
 def build_examples(domain, files):
-    """(image path, box, class, starboard) for every labelled object in the subset."""
+    """(image path, box, global class, starboard) for every labelled object in the subset."""
     out = []
     for f in files:
         img = DATA / domain / "images" / f
@@ -52,7 +60,7 @@ def build_examples(domain, files):
         for c, x0, y0, x1, y1 in read_boxes(DATA / domain / "labels" / f"{img.stem}.txt", w, h):
             x0, y0, x1, y1 = max(0, x0), max(0, y0), min(w, x1), min(h, y1)
             if x1 - x0 >= 3 and y1 - y0 >= 3:
-                out.append((img, (x0, y0, x1, y1), c, swath.side((x0 + x1) / 2) > 0))
+                out.append((img, (x0, y0, x1, y1), global_class(domain, c), swath.side((x0 + x1) / 2) > 0))
     return out
 
 
@@ -75,10 +83,10 @@ def sample(ex, rng):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--domain", required=True, choices=list(NAMES))
-    ap.add_argument("--seed", type=int, required=True)
-    ap.add_argument("--real", type=float, required=True)
-    ap.add_argument("--steps", type=int, default=3000)
+    ap.add_argument("--domain", default="all", choices=["all", *NAMES])
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--real", type=float, default=1.0)
+    ap.add_argument("--steps", type=int, default=6000)
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--rank", type=int, default=16)
     ap.add_argument("--lr", type=float, default=1e-4)
@@ -90,8 +98,10 @@ def main():
     from peft.utils import get_peft_model_state_dict
 
     pct = round(args.real * 100)
-    split = REPO / "data" / "splits" / args.domain / ("train.txt" if pct == 100 else f"train_s{args.seed}_p{pct}.txt")
-    examples = build_examples(args.domain, split.read_text().split())
+    examples = []
+    for d in (NAMES if args.domain == "all" else [args.domain]):
+        split = REPO / "data" / "splits" / d / ("train.txt" if pct == 100 else f"train_s{args.seed}_p{pct}.txt")
+        examples += build_examples(d, split.read_text().split())
     out = SCRATCH / "inpaint_lora" / f"{args.domain}_s{args.seed}_p{pct}"
     out.mkdir(parents=True, exist_ok=True)
     print(f"{len(examples)} objects -> {out}")
@@ -111,7 +121,7 @@ def main():
     sched = DDPMScheduler.from_config(pipe.scheduler.config)
 
     with torch.no_grad():
-        texts = [ip.prompt(args.domain, n) for n in NAMES[args.domain]] + [""]
+        texts = [ip.prompt(d, n) for d, n in CLASSES] + [""]
         tok = tokenizer(texts, padding="max_length", max_length=tokenizer.model_max_length, return_tensors="pt")
         emb = text_encoder(tok.input_ids.to(dev))[0].float()  # rows: classes..., then empty (CFG dropout)
 
@@ -119,7 +129,7 @@ def main():
         batch = [sample(examples[rng.randrange(len(examples))], rng) for _ in range(args.batch)]
         im = torch.tensor(np.stack([b[0] for b in batch]))[:, None].repeat(1, 3, 1, 1).to(dev)
         m = torch.tensor(np.stack([b[1] for b in batch]))[:, None].to(dev)
-        cls = torch.tensor([b[2] if rng.random() > 0.1 else len(NAMES[args.domain]) for b in batch], device=dev)
+        cls = torch.tensor([b[2] if rng.random() > 0.1 else len(CLASSES) for b in batch], device=dev)
         with torch.no_grad():
             lat = vae.encode(im.half()).latent_dist.sample().float() * vae.config.scaling_factor
             masked = vae.encode((im * (1 - m)).half()).latent_dist.sample().float() * vae.config.scaling_factor
