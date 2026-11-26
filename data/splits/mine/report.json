@@ -1,0 +1,67 @@
+{
+  "names": [
+    "MILCO",
+    "NOMBO"
+  ],
+  "hash_dist": 6,
+  "corrupt_skipped": [],
+  "downscaled_copies_removed": 416,
+  "n_images": 754,
+  "dup_clusters_gt1": 1,
+  "images_in_dup_clusters": 2,
+  "train_dropped_as_leak": 0,
+  "splits": {
+    "train": {
+      "images": 531,
+      "empty": 388,
+      "boxes": {
+        "NOMBO": 113,
+        "MILCO": 201
+      }
+    },
+    "val": {
+      "images": 113,
+      "empty": 83,
+      "boxes": {
+        "NOMBO": 18,
+        "MILCO": 51
+      }
+    },
+    "test": {
+      "images": 110,
+      "empty": 82,
+      "boxes": {
+        "MILCO": 37,
+        "NOMBO": 14
+      }
+    },
+    "dropped": {
+      "images": 0,
+      "empty": 0,
+      "boxes": {}
+    }
+  },
+  "groups_per_split": {
+    "train": {
+      "2010": 146,
+      "2015": 49,
+      "2017": 41,
+      "2018": 264,
+      "2021": 31
+    },
+    "val": {
+      "2010": 26,
+      "2015": 12,
+      "2017": 7,
+      "2018": 59,
+      "2021": 9
+    },
+    "test": {
+      "2010": 32,
+      "2015": 10,
+      "2017": 8,
+      "2018": 52,
+      "2021": 8
+    }
+  }
+}

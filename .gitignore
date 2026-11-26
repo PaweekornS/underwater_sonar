@@ -1,0 +1,33 @@
+
+# remake outputs
+runs/
+*.pt
+*.weights
+synthetic/outputs/
+/data/synth/
+/local_samples/
+/.venv/
+
+# local tool / plugin state
+.claude/
+graphify-out/
+.understand-anything/
+.gstack/
+*.local.json
+
+# python bytecode, caches, editor and OS files
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+# training outputs
+results/
+
+# paper drafts (kept local)
+/paper/

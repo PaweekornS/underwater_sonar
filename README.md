@@ -1,82 +1,65 @@
-# 🐠 Side-Scan Sonar Image Synthesis for Enhanced Underwater Object Detection
+# Physics-guided synthetic data for side-scan sonar object detection
 
-> **Goal:** Prove that semisynthetic and generative sonar images can enhance side-scan sonar object detection performance and improve model generalization on unseen optical-like targets.
+Does physics-guided synthetic data help detect small objects in **full-swath** side-scan sonar (SSS),
+beyond standard augmentation and naive copy-paste, especially when real data is scarce?
 
----
+## Datasets
 
-## 📘 Project Overview
+All three are full-swath SSS. Each domain is trained and reported separately.
 
-This project explores **two parallel research pipelines**:
+| Domain | Classes | Images | Split |
+| --- | --- | --- | --- |
+| Cylinder2 (Roboflow, CC BY 4.0) | cylinder, manta | 478 | official train/val/test, with near-duplicates removed from train |
+| Mine detection ([figshare 24574879](https://figshare.com/articles/dataset/_i_Side-scan_sonar_imaging_for_Mine_detection_i_/24574879)) | MILCO, NOMBO | 754 after removing downscaled copies | fixed-seed stratified, pHash dedup |
+| AquaScan-1K (Zenodo 18771165, MIT) | human | 1032 | fixed-seed stratified, pHash dedup |
 
-1. **Synthetic Image Generation** — producing artificial side-scan sonar images via multiple generative strategies.
-2. **Object Detection** — benchmarking YOLO-based detectors trained on real, synthetic, and hybrid datasets.
+Images are converted to single-channel intensity, because sonar colour is only a display palette.
+The split files and low-data subsets are committed in [data/splits/](data/splits/): for each of 5 seeds,
+the subsets are nested (10% ⊂ 25% ⊂ 50%).
 
-By combining these efforts, we aim to **quantify the contribution of synthetic data** to underwater object detection performance and demonstrate **cross-domain generalization** (e.g., detecting optical-like objects composited into real sonar backgrounds).
+## Pipeline
 
----
+```text
+scripts/prepare_data.py   raw datasets -> grayscale PNG + unified YOLO labels + split files
+scripts/make_synth.py     synthetic images for one (domain, seed, real %, method) cell
+scripts/train.py          one detector run (equal optimizer steps for every config) -> results/<run_id>.json
+scripts/summarize.py      mean ± std per config, paired t-tests by seed
+```
 
-## ⚙️ Pipeline Summary
+Synthetic methods ([synth/](synth/)):
 
-### 1️⃣ Synthetic Image Generation
+- `naive`: paste the labelled box as-is at a random position.
+- `box-<steps>`: naive plus physics steps.
+  - `sea`: seafloor-only placement, avoiding the water column, nadir, no-data regions and UI overlays.
+  - `mirror`: the shadow points away from nadir.
+  - `range`: the box is pasted near its source ground range.
+  - `blend`: feathered edge and level matching.
+- `ours`: acoustic-signature cut with a range-scaled shadow. This was the first design; it is kept as a
+  negative result.
 
-We employ three distinct generative approaches to create sonar-like imagery:
+Detectors: YOLO11n (main) and RT-DETR-l, both from Ultralytics and COCO-pretrained, at `imgsz=1024`.
+The primary metric is mAP50, and mAP50-95 is reported alongside it.
 
-| Approach | Description | Goal |
-|-----------|--------------|------|
-| **Procedural (Semisynthetic)** | Classical simulation using reference sonar statistics (Weibull-based intensity distribution) and optical object masks. | Quickly expand training data for low-sample classes (e.g., victims, airplanes). |
-| **GAN-based** | Learn sonar texture generation via **GANs** (e.g., StyleGAN3 / Pix2Pix / ADA-StyleGAN). | Capture high-frequency sonar texture realism. |
-| **Diffusion-based** | Generate or enhance sonar imagery via **diffusion models** (e.g., DDPM / Cold Diffusion). | Preserve global sonar structure while improving detail and variation. |
+## Running on Slurm (LANTA)
 
-Each generated dataset is analyzed in terms of **visual realism**, **statistical similarity** (e.g., FID score), and **utility for object detection**.
+```bash
+# CPU: data prep or synthetic generation, one command per line
+sbatch --dependency=singleton scripts/slurm/cpu.sh commands.txt
+# GPU: training lines, 3 per GPU, at most 4 GPUs at once
+bash scripts/slurm/submit.sh jobs.txt 3
+bash scripts/slurm/gpu_hours.sh   # GPU-hours used so far
+```
 
----
+Example training line:
 
-### 2️⃣ Preprocessing
+```bash
+python scripts/train.py --domain mine --real 0.25 --synth box-sea-mirror --ratio 1 --aug on --model yolon --seed 0
+```
 
-We will investigate preprocessing techniques that may enhance model robustness and image clarity before training:
+## Local preview
 
-- **Noise filtering** (speckle or Gaussian noise suppression)
-- **Contrast enhancement** (CLAHE — Contrast Limited Adaptive Histogram Equalization)
-- **Super-resolution** (optional; may use ESRGAN or diffusion-based upscalers)
+```bash
+python tools/preview_synth.py local_samples/previews   # naive vs physics contact sheets
+```
 
-These are experimental steps to assess their impact on detection accuracy.
-
----
-
-### 3️⃣ Object Detection
-
-We use the **YOLO framework** (Ultralytics) as the baseline detector due to its real-time performance and robustness.
-
-#### Experiments
-
-| Experiment | Training Dataset | Objective |
-|-------------|------------------|------------|
-| **E1** | Real sonar dataset only (KLSG, SDVDs) | Baseline real-data detection performance. |
-| **E2** | Synthetic dataset only (from Procedural, GAN, Diffusion) | Evaluate how much synthetic data alone can represent sonar features. |
-| **E3** | Mixed dataset (Real + Synthetic) | Test synthetic data as augmentation for improving generalization. |
-
-#### Evaluation Metrics
-- Image Synthesis: FID, SSIM, PSNR
-- Object detection: mAP (mean Average Precision), IoU
-- Inference time
-
----
-
-## 🧩 Dataset Sources
-
-**KLSG:** https://drive.google.com/file/d/1lao8VSbycjlSpctpaeKO0Vfn8H-TGEtj/view?usp=sharing \
-**Mine:** https://www.kaggle.com/datasets/sierra022/sonar-imaging-mine-detection \
-**Drowning victim:** https://github.com/AJaszcz/SDVDs-Sonar-Drowned-Victim-Datasets/tree/v2.0.1 
-
-All datasets are pre-split into **train / val / test** for reproducibility.
-
----
-
-## 🧪 Expected Outcomes
-
-- Quantitative proof that **synthetic sonar data** can **enhance YOLO detection accuracy** compared to real-only training.
-- Demonstration of **generalization**: the model trained on real + synthetic data should detect **optical objects inserted into real sonar scenes**.
-- Comparative report between **procedural, GAN-based, and diffusion-based** synthetic data performance.
-
- ### Reference paper
- https://ieeexplore.ieee.org/document/9026963
+`local_samples/` holds a few train images per domain and is not committed.
