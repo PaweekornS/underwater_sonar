@@ -1,6 +1,6 @@
 """Local preview: naive vs ours on a few train images per domain, saved as zoomed contact sheets.
 Converts local_samples/<domain> colour images to intensity the same way scripts/prepare_data.py does.
-Usage: python notebooks/preview_synth.py <out_dir>"""
+Usage: python tools/preview_synth.py <out_dir>"""
 import glob
 import random
 import sys

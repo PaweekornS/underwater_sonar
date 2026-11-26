@@ -59,7 +59,7 @@ python scripts/train.py --domain mine --real 0.25 --synth box-sea-mirror --ratio
 ## Local preview
 
 ```bash
-python notebooks/preview_synth.py local_samples/previews   # naive vs physics contact sheets
+python tools/preview_synth.py local_samples/previews   # naive vs physics contact sheets
 ```
 
 `local_samples/` holds a few train images per domain and is not committed.
