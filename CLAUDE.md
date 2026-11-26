@@ -46,6 +46,8 @@ Settled with the user on 2026-11-12. These override the spec where they differ.
   - **Diagnosis result (2026-11-25)**: neither shadow, placement, scale, speckle, nor blending is the cause. Images with ours-pasted objects alone score *below* plain real images (AquaScan mAP50 .502 vs .609), and precision drops (.63 vs .73). The culprit is the core *signature cut by threshold mask*: it yields incomplete blobs without context, which teaches false positives. Naive pastes the whole box and does no harm.
   - **YOLO11n beats YOLO11s at 25% real** in every domain (mAP50: AquaScan .644/.609, Cylinder2 .408/.193, Mine .271/.216). Switched to 11n. All synth comparisons must be redone on 11n.
   - **New direction: forward selection from naive.** `box-<steps>` in `synth/compose.py` pastes the whole box and adds physics steps one at a time: `sea` (seafloor-only placement), `mirror` (shadow away from nadir), `range` (paste near the source ground range), `blend` (feathered box edge plus level ratio). Each step is kept only if it helps.
+  - **Forward-selection result (YOLO11n, 25% real, 3 seeds, 2026-11-25)**: no copy-paste variant (naive, box-sea, +mirror, +range, +blend, ours) beats baseline 2 significantly in any domain. Differences of ±.01–.03 mAP50 are below the std (.02–.08). `blend` is the only consistent effect, and it is negative in all 3 domains. Ours is worst on Mine (.196 vs .271). Copy-paste gains seen on 11s vanished on 11n. Next: the generative pilots, and testing at 10% real and/or 5 seeds.
+  - **Generative track** (user request, 2026-11-25): box-conditioned inpainting. Diffusion is a LoRA on SD 1.5 inpainting (`scripts/train_inpaint.py`, `scripts/gen_inpaint.py`, `synth/inpaint.py`). The GAN is the official pix2pix networks (`unet_256`, PatchGAN, vanilla loss, L1 100), cloned at `/scratch/.../ext/pix2pix`, in `scripts/train_gan_inpaint.py`. **Plan A (user decision)**: one generator per type, trained on the full train splits of all domains and conditioned on (domain, class); generative results are judged at 100% real, and low-data results count only as an upper bound. Generation verifies each object with the object-vs-seabed judge (`synth/judge.py`, ResNet18, `scripts/train_judge.py`), calibrated at 90% recall on real val objects; the older S/N + YOLO check remains as `--verify detector`. Pass PIL images to diffusers: numpy uint8 inputs are read as [0, 1] floats and give flat grey fills.
   - **The user allows a full redesign of the synth method** (2026-11-13), including dropping the current logic or moving to GAN/diffusion, if it makes the paper work. Before proposing generative models, weigh the data size (only 83–190 objects at 25% real), the 100 GPU-hour budget, and whether the comparison stays fair.
 
 ## Data facts (checked 2026-11-12)
@@ -59,7 +61,7 @@ Settled with the user on 2026-11-12. These override the spec where they differ.
 - **AquaScan**: one source PNG is truncated (`9bf66ea1-Screenshot_2025-08-03_15.08.49.png`); `prepare_data.py` skips it and logs it in `report.json`.
 - **Prepared data**: `/scratch/lt200304-dipmt/paweekorn/data/<domain>/{images,labels,meta.csv}` holds grayscale PNGs built by `scripts/prepare_data.py`. Synthetic sets are in `.../data/<domain>/synth/<method>/s{seed}_p{pct}/`, built by `scripts/make_synth.py` on a CPU node via `scripts/slurm/cpu.sh`. `data_color_old/` and `results/_color_archive/` hold the superseded colour runs.
 - **Gap to JMSE 2026** (YOLO11n on Mine, mAP50-95 .648 vs our ~.25): leakage from duplicates does *not* explain it (leaky split .255 vs clean .245). The next hypothesis is that they used positive-only images; this is not tested yet.
-- **Workflow tools**: `scripts/summarize.py` prints mean ± std and paired t-tests by seed. `notebooks/preview_synth.py` renders local naive-vs-ours contact sheets from `local_samples/`, which is gitignored.
+- **Workflow tools**: `scripts/summarize.py` prints mean ± std and paired t-tests by seed. `tools/preview_synth.py` renders local naive-vs-ours contact sheets from `local_samples/`, which is gitignored.
 
 ## LANTA (NSTDA supercomputer)
 
@@ -91,6 +93,6 @@ Settled with the user on 2026-11-12. These override the spec where they differ.
 ## Code rules
 
 - Real code lives in `.py` files and runs through the CLI and Slurm. Notebooks are for exploration and figures only.
-- Use the layout from spec §7: `configs/ data/splits/ synth/ scripts/ notebooks/ results/`.
+- Use the layout from spec §7: `configs/ data/splits/ synth/ scripts/ tools/ results/`. `tools/` holds exploration and figure scripts (plain `.py`, run locally or over ssh), in place of the spec's `notebooks/`.
 - Commit split files. Do not commit images, weights, or generated data.
 - Every run must be reproducible from (domain, real fraction, synth method, ratio, model, seed).
